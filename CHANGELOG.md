@@ -18,3 +18,14 @@ All notable changes to `two-factor-for-laravel` will be documented in this file.
 - Package events for every lifecycle transition and for replay detection.
 - Zero third-party runtime dependencies; google2fa byte-compatibility proven by committed
   static parity fixtures.
+- `TwoFactorService` contract + a shipped `FakeTwoFactor` testing double swapped in by
+  `TwoFactor::fake()` (programmable `accept()`/`reject()`/`acceptCode()`, canned outputs, call
+  recording, and runner-agnostic assertions) — assert your 2FA flow without real TOTP math.
+- `TwoFactorVerified` and `TwoFactorVerificationFailed` events on the success/failure branches
+  of `verifyFor()`, for audit trails, success/failure metering, and host-side lockout.
+- Trait action verbs on `HasTwoFactorAuthentication`: `startTwoFactorEnrolment()`,
+  `confirmTwoFactor()`, `verifyTwoFactorCode()`, `disableTwoFactor()`,
+  `regenerateTwoFactorRecoveryCodes()`, plus `twoFactorRecoveryCodesRemaining()` and an
+  overridable `twoFactorLabel()` provisioning-label hook.
+- Security: the enrolment-confirmation code's timestep is now recorded in the replay guard, so
+  it can no longer be replayed once at the first login.

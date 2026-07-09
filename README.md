@@ -175,6 +175,25 @@ app(DisableTwoFactor::class)->execute($user);          // clears all 2FA state
 $codes = app(RegenerateRecoveryCodes::class)->execute($user); // returns the new codes
 ```
 
+### On the user model (trait verbs)
+
+`HasTwoFactorAuthentication` also exposes the whole lifecycle on the user itself, so the
+model is the subject of the action — no container-resolved action needed:
+
+```php
+$setup  = $user->startTwoFactorEnrolment();          // → TwoFactorSetup
+$user->confirmTwoFactor($request->string('code'));   // finish enrolment
+$ok     = $user->verifyTwoFactorCode($code);         // login challenge (== TwoFactor::verifyFor)
+$user->disableTwoFactor();
+$codes  = $user->regenerateTwoFactorRecoveryCodes(); // list<string>
+
+$user->twoFactorRecoveryCodesRemaining();            // int — drive a "regenerate?" prompt
+```
+
+Pass a label to `startTwoFactorEnrolment('billing@acme.io')`, or override
+`twoFactorLabel()` on the model to key the provisioning URI on a username/phone instead of
+the default (email → primary key).
+
 ### Facade primitives
 
 ```php
@@ -193,7 +212,9 @@ $codes  = TwoFactor::generateRecoveryCodes();                   // list<string>
   uses `===`, `md5`, or `sha1` for comparisons.
 - **Replay protection** — the matched timestep is persisted; any code with a timestep `<=`
   the last successful one is rejected and a `TwoFactorReplayDetected` event fires. For
-  multi-node hosts, use the `cache` guard backed by an atomic store (Redis / database).
+  multi-node hosts, use the `cache` guard backed by an atomic store (Redis / database). The
+  code used to *confirm* enrolment is recorded in the replay guard too, so it cannot double
+  as the first login code — the user simply waits for the next 30s step.
 - **Single-use recovery codes** — a consumed recovery code is removed from the stored set.
 - **Rate limiting is the host's job** — apply a `throttle:` middleware to your 2FA challenge
   route; the package ships no limiter but surfaces typed exceptions and events to drive one.
@@ -218,7 +239,19 @@ All events carry the user model only (no secrets/codes):
 | `TwoFactorDisabled` | `DisableTwoFactor` clears 2FA state |
 | `RecoveryCodesRegenerated` | `RegenerateRecoveryCodes` replaces the code set |
 | `RecoveryCodeConsumed` | `verifyFor` burns a recovery code |
+| `TwoFactorVerified` | a user passes a challenge (`viaRecoveryCode: bool` on the event) |
+| `TwoFactorVerificationFailed` | an enrolled user fails a challenge (not on replay/no-secret) |
 | `TwoFactorReplayDetected` | a code with an already-used timestep is rejected |
+
+`TwoFactorVerified` / `TwoFactorVerificationFailed` let you audit challenges, meter
+success/failure rates, and drive host-side lockout without wrapping the facade — e.g. a
+listener that records a `LoginAttempt` or increments a rate limiter:
+
+```php
+Event::listen(function (TwoFactorVerificationFailed $event): void {
+    RateLimiter::hit("2fa:{$event->user->getKey()}");
+});
+```
 
 ## Migrating from google2fa
 
@@ -233,6 +266,35 @@ static parity fixtures; google2fa is **not** a dependency of this package.
 ```bash
 composer test
 ```
+
+### Faking two-factor in host tests
+
+`TwoFactor::fake()` swaps the service (and every action that depends on it) for a
+programmable, no-crypto double, so you can assert your 2FA flow without freezing the clock
+or computing real codes:
+
+```php
+use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
+
+// Accept any code (the default) and assert the challenge was verified:
+$fake = TwoFactor::fake()->accept();
+$this->post('/login/2fa', ['code' => '123456'])->assertOk();
+$fake->assertVerifiedFor($user);
+
+// Reject every code:
+TwoFactor::fake()->reject();
+$this->post('/login/2fa', ['code' => '000000'])->assertStatus(422);
+
+// Accept only a specific code:
+TwoFactor::fake()->acceptCode('424242');
+```
+
+Programmable behaviour: `accept()`, `reject()`, `acceptCode($code)`, `withSecret($secret)`,
+`withRecoveryCodes(...$codes)`. Assertions (each throws a package exception, so they work
+under any runner): `assertVerified()`, `assertVerifiedFor($user)`,
+`assertVerificationFailed()`, `assertNothingVerified()`, `assertVerifyCount($n)`,
+`assertCodeAttempted($code)`. The fake is test-only and performs no TOTP math — it is bound
+solely through `TwoFactor::fake()` and never in production.
 
 ## Changelog
 

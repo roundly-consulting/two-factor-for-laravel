@@ -8,10 +8,13 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
 use RoundlyConsulting\TwoFactor\Support\Base32;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 use RoundlyConsulting\TwoFactor\Support\Totp;
@@ -21,7 +24,7 @@ use SensitiveParameter;
  * The package's public entry point: TOTP primitives plus the replay-safe,
  * recovery-aware verifyFor() used during a login challenge.
  */
-final class TwoFactor
+final class TwoFactor implements TwoFactorService
 {
     public function __construct(
         private readonly ReplayGuard $replayGuard,
@@ -84,10 +87,20 @@ final class TwoFactor
 
             $this->replayGuard->record($user, $timestep);
 
+            $this->events?->dispatch(new TwoFactorVerified($user, viaRecoveryCode: false));
+
             return true;
         }
 
-        return $this->consumeRecoveryCode($user, $code);
+        if ($this->consumeRecoveryCode($user, $code)) {
+            $this->events?->dispatch(new TwoFactorVerified($user, viaRecoveryCode: true));
+
+            return true;
+        }
+
+        $this->events?->dispatch(new TwoFactorVerificationFailed($user));
+
+        return false;
     }
 
     public function provisioningUri(

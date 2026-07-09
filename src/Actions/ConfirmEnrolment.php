@@ -8,10 +8,10 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Date;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorConfirmed;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorCodeException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorNotPendingException;
-use RoundlyConsulting\TwoFactor\TwoFactor;
 use SensitiveParameter;
 
 /**
@@ -21,7 +21,7 @@ use SensitiveParameter;
 final class ConfirmEnrolment
 {
     public function __construct(
-        private readonly TwoFactor $twoFactor,
+        private readonly TwoFactorService $twoFactor,
         private readonly ?Dispatcher $events = null,
     ) {}
 

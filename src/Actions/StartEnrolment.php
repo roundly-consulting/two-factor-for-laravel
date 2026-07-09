@@ -7,12 +7,12 @@ namespace RoundlyConsulting\TwoFactor\Actions;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorEnrolmentStarted;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAlreadyEnabledException;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
-use RoundlyConsulting\TwoFactor\TwoFactor;
 
 /**
  * Begins (or restarts) a pending enrolment: generates a fresh secret + recovery
@@ -21,7 +21,7 @@ use RoundlyConsulting\TwoFactor\TwoFactor;
 final class StartEnrolment
 {
     public function __construct(
-        private readonly TwoFactor $twoFactor,
+        private readonly TwoFactorService $twoFactor,
         private readonly ?Dispatcher $events = null,
     ) {}
 

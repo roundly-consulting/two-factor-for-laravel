@@ -10,6 +10,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\ServiceProvider;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
 use RoundlyConsulting\TwoFactor\ReplayGuards\CacheReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\ColumnReplayGuard;
@@ -24,10 +25,12 @@ final class TwoFactorServiceProvider extends ServiceProvider
 
         $this->app->singleton(ReplayGuard::class, fn (Application $app): ReplayGuard => $this->resolveReplayGuard($app));
 
-        $this->app->singleton(TwoFactor::class, fn (Application $app): TwoFactor => new TwoFactor(
+        $this->app->singleton(TwoFactorService::class, fn (Application $app): TwoFactor => new TwoFactor(
             $app->make(ReplayGuard::class),
             $this->dispatcher($app),
         ));
+
+        $this->app->alias(TwoFactorService::class, TwoFactor::class);
     }
 
     public function boot(): void

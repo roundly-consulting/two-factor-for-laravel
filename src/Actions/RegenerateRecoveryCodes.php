@@ -7,10 +7,10 @@ namespace RoundlyConsulting\TwoFactor\Actions;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodesRegenerated;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
-use RoundlyConsulting\TwoFactor\TwoFactor;
 
 /**
  * Replaces the user's recovery codes, returning the new plaintext set to show
@@ -19,7 +19,7 @@ use RoundlyConsulting\TwoFactor\TwoFactor;
 final class RegenerateRecoveryCodes
 {
     public function __construct(
-        private readonly TwoFactor $twoFactor,
+        private readonly TwoFactorService $twoFactor,
         private readonly ?Dispatcher $events = null,
     ) {}
 

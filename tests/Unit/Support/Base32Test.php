@@ -35,7 +35,7 @@ it('rejects characters outside the alphabet', function (): void {
     Base32::decode('MZXW6YTB01'); // 0 and 1 are not in the base32 alphabet
 })->throws(InvalidBase32Exception::class);
 
-it('decodes the cosmos-auth reference secret to its expected key bytes', function (): void {
+it('decodes the reference secret to its expected key bytes', function (): void {
     // ABCDEFGHIJKLMNOP over the base32 alphabet → known 10-byte key.
     expect(bin2hex(Base32::decode('ABCDEFGHIJKLMNOP')))->toBe('00443214c74254b635cf');
 });

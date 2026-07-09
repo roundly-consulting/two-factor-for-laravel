@@ -3,20 +3,21 @@
 declare(strict_types=1);
 
 /*
- * google2fa compatibility parity vectors — COMMITTED STATIC FIXTURE.
+ * TOTP parity vectors — COMMITTED STATIC FIXTURE.
  *
  * Each row is [base32-secret, unix-timestamp, expected 6-digit code] for the
  * default TOTP profile (HMAC-SHA1, 6 digits, 30s period). These are the exact
- * codes pragmarx/google2fa produces for the same secret+timestamp, so a host
- * migrating from google2fa keeps verifying every stored secret unchanged.
+ * codes any RFC 6238 authenticator produces for the same secret+timestamp, so a
+ * host migrating from another TOTP library keeps verifying every stored secret
+ * unchanged.
  *
- * google2fa implements plain RFC 6238 (SHA1/6/30) with an RFC 4648 base32
- * decoder, so its output is byte-identical to this package's native Totp. This
- * table was generated ONCE, offline, and pinned here as a regression guarantee.
- * google2fa is intentionally NOT a dependency of this package (not in require,
- * not in require-dev) — the vectors below stand in for it.
+ * The default profile is plain RFC 6238 (SHA1/6/30) over an RFC 4648 base32
+ * decoder, so standard authenticator output is byte-identical to this package's
+ * native Totp. This table was generated ONCE, offline, and pinned here as a
+ * regression guarantee — no third-party TOTP library is a dependency of this
+ * package (not in require, not in require-dev); the vectors below stand in for it.
  *
- * Provenance: generated 2026-07-09 against pragmarx/google2fa v8.0 output,
+ * Provenance: generated 2026-07-09 from a standard RFC 6238 TOTP implementation,
  * cross-checked against RFC 6238 Appendix B and RFC 4226 Appendix D vectors
  * (see Rfc6238VectorsTest / Rfc4226VectorsTest). Regeneration is a manual,
  * documented one-off and is not part of the test suite or CI.
@@ -25,7 +26,7 @@ declare(strict_types=1);
  */
 
 return [
-    // secret ABCDEFGHIJKLMNOP (the cosmos-auth reference test secret)
+    // secret ABCDEFGHIJKLMNOP (the reference test secret)
     ['ABCDEFGHIJKLMNOP', 0, '827178'],
     ['ABCDEFGHIJKLMNOP', 30, '317963'],
     ['ABCDEFGHIJKLMNOP', 59, '317963'],
@@ -37,7 +38,7 @@ return [
     ['ABCDEFGHIJKLMNOP', 1600000000, '092806'],
     ['ABCDEFGHIJKLMNOP', 2000000000, '394754'],
 
-    // secret JBSWY3DPEHPK3PXP (the canonical "Hello!" google2fa example secret)
+    // secret JBSWY3DPEHPK3PXP (the canonical "Hello!" example secret)
     ['JBSWY3DPEHPK3PXP', 0, '282760'],
     ['JBSWY3DPEHPK3PXP', 30, '996554'],
     ['JBSWY3DPEHPK3PXP', 59, '996554'],

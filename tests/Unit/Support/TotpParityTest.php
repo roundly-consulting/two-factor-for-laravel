@@ -5,7 +5,7 @@ declare(strict_types=1);
 use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
 use RoundlyConsulting\TwoFactor\Support\Totp;
 
-it('reproduces every committed google2fa parity vector', function (): void {
+it('reproduces every committed TOTP parity vector', function (): void {
     $totp = new Totp(HashAlgorithm::Sha1, 6, 30);
 
     foreach (parityVectors() as [$secret, $timestamp, $expected]) {

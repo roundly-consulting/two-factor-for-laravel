@@ -6,7 +6,7 @@ use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 
 return [
-    // TOTP parameters — defaults match google2fa / standard authenticator apps.
+    // TOTP parameters — defaults match standard authenticator apps (RFC 6238).
     'algorithm' => HashAlgorithm::Sha1->value,   // 'sha1' | 'sha256' | 'sha512'
     'digits' => 6,
     'period' => 30,                               // seconds per timestep

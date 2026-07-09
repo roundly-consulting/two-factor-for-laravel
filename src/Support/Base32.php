@@ -11,7 +11,7 @@ use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
  *
  * The decoder is intentionally lenient (case-insensitive, tolerates `=` padding
  * and whitespace) but strict about the alphabet, so it decodes secrets produced
- * by google2fa to byte-identical key material.
+ * by any standard authenticator app to byte-identical key material.
  */
 final class Base32
 {

@@ -14,7 +14,7 @@ code is rendered client-side from the `otpauth://` URI, so no image library ship
 - Constant-time verification (`hash_equals`) and replay protection (a code can't be reused).
 - Encrypted secret + recovery-code storage via Laravel's `encrypted` casts.
 - Ergonomic surface: a `TwoFactor` facade, lifecycle Actions, a user-model trait, and events.
-- **google2fa-compatible** — existing google2fa secrets keep verifying unchanged.
+- **Standards-compatible** — existing TOTP secrets from standard authenticator apps keep verifying unchanged.
 
 ## Requirements
 
@@ -57,7 +57,7 @@ The package works with **zero configuration** — every key has a safe default.
 
 ```php
 return [
-    // TOTP parameters — defaults match google2fa / standard authenticator apps.
+    // TOTP parameters — defaults match standard authenticator apps (RFC 6238).
     'algorithm' => 'sha1',        // 'sha1' | 'sha256' | 'sha512'
     'digits' => 6,
     'period' => 30,               // seconds per timestep
@@ -259,13 +259,14 @@ Event::listen(function (TwoFactorVerificationFailed $event): void {
 });
 ```
 
-## Migrating from google2fa
+## Migrating from another TOTP library
 
-This package is **byte-compatible** with `pragmarx/google2fa` for the default TOTP profile
-(SHA1, 6 digits, 30s). Existing secrets and encrypted recovery codes keep verifying under the
-same `APP_KEY` with no data migration — just add the `two_factor_last_used_timestep` column
-(via the macro/migration) to enable replay protection. Compatibility is proven by committed
-static parity fixtures; google2fa is **not** a dependency of this package.
+This package is **byte-compatible** with the standard TOTP profile (SHA1, 6 digits, 30s) used
+by common authenticator apps and libraries. Existing secrets and encrypted recovery codes keep
+verifying under the same `APP_KEY` with no data migration — just add the
+`two_factor_last_used_timestep` column (via the macro/migration) to enable replay protection.
+Compatibility is proven by committed static parity fixtures; no third-party TOTP library is a
+dependency of this package.
 
 ## Testing
 

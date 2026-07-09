@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://roundly-consulting.com/open-source">
+    <img src="art/hero.png" alt="Two Factor For Laravel — Roundly open source" width="100%">
+  </a>
+</p>
+
 # Two-Factor Authentication for Laravel
 
 Native RFC 6238 TOTP two-factor authentication for Laravel — encrypted secrets, single-use

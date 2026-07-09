@@ -20,4 +20,9 @@ interface TwoFactorAuthenticatable
      * @return list<string>
      */
     public function twoFactorRecoveryCodes(): array;
+
+    /**
+     * The label rendered in the provisioning URI (e.g. the account's email).
+     */
+    public function twoFactorLabel(): string;
 }

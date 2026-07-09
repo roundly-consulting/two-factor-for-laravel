@@ -15,6 +15,7 @@ arch('src only uses allowed vendor roots')
         'SensitiveParameter',
         'RuntimeException',
         // native helpers used unqualified
+        'app',
         'config',
         'config_path',
         'database_path',

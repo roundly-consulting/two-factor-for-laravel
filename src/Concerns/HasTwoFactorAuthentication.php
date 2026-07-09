@@ -5,7 +5,15 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Concerns;
 
 use Illuminate\Database\Eloquent\Model;
+use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
+use RoundlyConsulting\TwoFactor\Actions\DisableTwoFactor;
+use RoundlyConsulting\TwoFactor\Actions\RegenerateRecoveryCodes;
+use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
+use SensitiveParameter;
 
 /**
  * Gives a host user model the two-factor state helpers required by
@@ -22,9 +30,73 @@ use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
  * with a remapped schema stays in control.
  *
  * @phpstan-require-extends Model
+ *
+ * @phpstan-require-implements TwoFactorAuthenticatable
  */
 trait HasTwoFactorAuthentication
 {
+    /**
+     * Begin (or restart) a pending enrolment for this user.
+     */
+    public function startTwoFactorEnrolment(?string $label = null): TwoFactorSetup
+    {
+        return app(StartEnrolment::class)->execute($this, $label);
+    }
+
+    /**
+     * Confirm the pending enrolment with the first authenticator code.
+     */
+    public function confirmTwoFactor(#[SensitiveParameter] string $code): void
+    {
+        app(ConfirmEnrolment::class)->execute($this, $code);
+    }
+
+    /**
+     * Verify a login-challenge code (TOTP with replay protection, then a
+     * single-use recovery-code fallback).
+     */
+    public function verifyTwoFactorCode(#[SensitiveParameter] string $code): bool
+    {
+        return app(TwoFactorService::class)->verifyFor($this, $code);
+    }
+
+    /**
+     * Fully disable two-factor authentication for this user.
+     */
+    public function disableTwoFactor(): void
+    {
+        app(DisableTwoFactor::class)->execute($this);
+    }
+
+    /**
+     * Replace this user's recovery codes, returning the new plaintext set once.
+     *
+     * @return list<string>
+     */
+    public function regenerateTwoFactorRecoveryCodes(): array
+    {
+        return app(RegenerateRecoveryCodes::class)->execute($this);
+    }
+
+    /**
+     * How many single-use recovery codes remain.
+     */
+    public function twoFactorRecoveryCodesRemaining(): int
+    {
+        return count($this->twoFactorRecoveryCodes());
+    }
+
+    /**
+     * The label rendered in the provisioning URI. Override to key on username,
+     * phone, or any other attribute instead of the default email → primary key.
+     */
+    public function twoFactorLabel(): string
+    {
+        $email = $this->getAttribute('email');
+
+        return is_string($email) && $email !== '' ? $email : (string) $this->getKey();
+    }
+
     /**
      * @return array<string, string>
      */

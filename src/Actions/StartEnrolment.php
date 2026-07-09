@@ -52,16 +52,9 @@ final class StartEnrolment
 
         return new TwoFactorSetup(
             secret: $secret,
-            provisioningUri: $this->twoFactor->provisioningUri($secret, $label ?? $this->label($user)),
+            provisioningUri: $this->twoFactor->provisioningUri($secret, $label ?? $user->twoFactorLabel()),
             recoveryCodes: $codes,
         );
-    }
-
-    private function label(TwoFactorAuthenticatable&Model $user): string
-    {
-        $email = $user->getAttribute('email');
-
-        return is_string($email) && $email !== '' ? $email : (string) $user->getKey();
     }
 
     /**

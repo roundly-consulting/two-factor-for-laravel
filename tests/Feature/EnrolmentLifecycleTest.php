@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
 use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
@@ -13,6 +14,7 @@ use RoundlyConsulting\TwoFactor\Events\RecoveryCodesRegenerated;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorConfirmed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorDisabled;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorEnrolmentStarted;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorCodeException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAlreadyEnabledException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorNotPendingException;
@@ -110,6 +112,36 @@ it('regenerates recovery codes and dispatches an event', function (): void {
         ->and($codes)->not->toBe($setup->recoveryCodes)
         ->and($user->fresh()->twoFactorRecoveryCodes())->toBe($codes);
     Event::assertDispatched(RecoveryCodesRegenerated::class);
+});
+
+it('rejects the confirmation code replayed at first login', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    Event::fake();
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+    $code = TwoFactor::currentCode($setup->secret);
+
+    app(ConfirmEnrolment::class)->execute($user->fresh(), $code);
+
+    // The exact code used to confirm cannot double as the first login code.
+    expect(TwoFactor::verifyFor($user->fresh(), $code))->toBeFalse();
+    Event::assertDispatched(TwoFactorReplayDetected::class);
+
+    Carbon::setTestNow();
+});
+
+it('accepts a later-step code after confirmation', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+
+    app(ConfirmEnrolment::class)->execute($user->fresh(), TwoFactor::currentCode($setup->secret));
+
+    // A code at the next timestep still verifies.
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_060));
+    expect(TwoFactor::verifyFor($user->fresh(), TwoFactor::currentCode($setup->secret)))->toBeTrue();
+
+    Carbon::setTestNow();
 });
 
 it('uses a custom column map when configured', function (): void {

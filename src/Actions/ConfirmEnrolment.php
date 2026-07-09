@@ -7,6 +7,7 @@ namespace RoundlyConsulting\TwoFactor\Actions;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Date;
+use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorConfirmed;
@@ -22,6 +23,7 @@ final class ConfirmEnrolment
 {
     public function __construct(
         private readonly TwoFactorService $twoFactor,
+        private readonly ReplayGuard $replayGuard,
         private readonly ?Dispatcher $events = null,
     ) {}
 
@@ -41,12 +43,18 @@ final class ConfirmEnrolment
 
         $secret = (string) $user->twoFactorSecret();
 
-        if ($this->twoFactor->verify($secret, $code) === false) {
+        $timestep = $this->twoFactor->verify($secret, $code);
+
+        if ($timestep === false) {
             throw InvalidTwoFactorCodeException::make();
         }
 
         $user->setAttribute((string) config('two-factor.columns.confirmed_at'), Date::now());
         $user->save();
+
+        // Spend the confirming timestep so the exact code just typed cannot be
+        // replayed once at the first login (security hardening — no crypto change).
+        $this->replayGuard->record($user, $timestep);
 
         $this->events?->dispatch(new TwoFactorConfirmed($user));
     }

@@ -108,9 +108,11 @@ it('regenerates recovery codes and dispatches an event', function (): void {
 
     $codes = app(RegenerateRecoveryCodes::class)->execute($user);
 
+    // Codes are hashed at rest by default, so the stored list is not the plaintext.
     expect($codes)->toHaveCount(8)
         ->and($codes)->not->toBe($setup->recoveryCodes)
-        ->and($user->fresh()->twoFactorRecoveryCodes())->toBe($codes);
+        ->and($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(8)
+        ->and($user->fresh()->twoFactorRecoveryCodes())->not->toBe($codes);
     Event::assertDispatched(RecoveryCodesRegenerated::class);
 });
 

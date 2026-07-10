@@ -4,25 +4,35 @@ declare(strict_types=1);
 
 use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
+use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
 
 return [
     // TOTP parameters — defaults match standard authenticator apps (RFC 6238).
+    // Bounds are enforced at runtime; out-of-range values throw
+    // InvalidTwoFactorConfigException rather than silently weakening 2FA.
     'algorithm' => HashAlgorithm::Sha1->value,   // 'sha1' | 'sha256' | 'sha512'
-    'digits' => 6,
-    'period' => 30,                               // seconds per timestep
-    'window' => 1,                                // accept ±N timesteps of drift
-    'secret_length' => 16,                        // base32 chars
+    'digits' => 6,                                // 6–8
+    'period' => 30,                               // 15–120 seconds per timestep
+    'window' => 1,                                // 0–2: accept ±N timesteps of drift
+    'secret_length' => 32,                        // base32 chars (≥16); 32 = 160 bits
 
     // Provisioning (otpauth:// URI). issuer falls back to config('app.name') at runtime.
     'issuer' => env('TWO_FACTOR_ISSUER'),         // null → app.name
 
     'recovery_codes' => [
         'count' => 8,
-        'storage' => RecoveryCodeStorage::Encrypted->value, // 'encrypted' (default) | 'hashed'
+        'storage' => RecoveryCodeStorage::Hashed->value, // 'hashed' (default) | 'encrypted'
+    ],
+
+    // Built-in brute-force limiter for verifyFor(), keyed per user. Set to null
+    // to disable it and rely on your own throttle middleware instead.
+    'attempts' => [
+        'max' => 5,                               // failed attempts before lockout
+        'decay' => 60,                            // seconds the lockout lasts
     ],
 
     // Replay protection: reject any code whose timestep <= the last successful one.
-    'replay_guard' => 'column',                   // 'column' | 'cache' | null
+    'replay_guard' => ReplayGuardMode::Column->value, // 'column' | 'cache' | 'none' (null → none)
     'cache' => [
         'store' => env('TWO_FACTOR_CACHE_STORE'), // null → default store (used by cache guard)
         'ttl' => 60 * 60 * 24,                    // seconds to retain last timestep in cache mode

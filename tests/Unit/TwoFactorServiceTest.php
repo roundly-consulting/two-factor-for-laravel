@@ -8,7 +8,7 @@ use RoundlyConsulting\TwoFactor\Support\Base32;
 it('generates a base32 secret of the configured length', function (): void {
     $secret = TwoFactor::generateSecret();
 
-    expect($secret)->toHaveLength(16)
+    expect($secret)->toHaveLength(32) // 32 base32 chars = 160 bits (RFC 4226 recommendation)
         ->and(Base32::decode($secret))->not->toBe(''); // decodes cleanly
 });
 

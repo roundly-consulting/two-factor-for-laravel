@@ -36,6 +36,23 @@ use SensitiveParameter;
 trait HasTwoFactorAuthentication
 {
     /**
+     * Hide the sensitive two-factor columns from array/JSON serialization so a
+     * host that returns the user model (e.g. `return $user;` from a route) never
+     * leaks the decrypted TOTP secret, the recovery codes, or the replay marker.
+     * Laravel merges trait initializers automatically at model boot.
+     */
+    public function initializeHasTwoFactorAuthentication(): void
+    {
+        $columns = $this->twoFactorColumnMap();
+
+        $this->makeHidden([
+            $columns['secret'],
+            $columns['recovery_codes'],
+            $columns['last_used_timestep'],
+        ]);
+    }
+
+    /**
      * Begin (or restart) a pending enrolment for this user.
      */
     public function startTwoFactorEnrolment(?string $label = null): TwoFactorSetup

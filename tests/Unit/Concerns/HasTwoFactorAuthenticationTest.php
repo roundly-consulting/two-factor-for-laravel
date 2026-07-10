@@ -50,20 +50,41 @@ it('regenerates recovery codes through the trait verb', function (): void {
 
     $codes = $user->regenerateTwoFactorRecoveryCodes();
 
+    // Hashed at rest by default: the stored list is not the returned plaintext.
     expect($codes)->toHaveCount(8)
         ->and($codes)->not->toBe($setup->recoveryCodes)
-        ->and($user->fresh()->twoFactorRecoveryCodes())->toBe($codes);
+        ->and($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(8)
+        ->and($user->fresh()->twoFactorRecoveryCodes())->not->toBe($codes);
 });
 
 it('tracks the remaining recovery-code count', function (): void {
     $user = TwoFactorUser::factory()->create();
     $setup = $user->startTwoFactorEnrolment();
+    $user->setAttribute((string) config('two-factor.columns.confirmed_at'), now())->save();
 
     expect($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(8);
 
     TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[0]);
 
     expect($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(7);
+});
+
+it('hides the sensitive two-factor columns from serialization', function (): void {
+    $user = TwoFactorUser::factory()->create();
+    $user->startTwoFactorEnrolment();
+    $user->setAttribute((string) config('two-factor.columns.confirmed_at'), now())->save();
+
+    $fresh = $user->fresh();
+    $array = $fresh->toArray();
+    $json = $fresh->toJson();
+
+    foreach (['two_factor_secret', 'two_factor_recovery_codes', 'two_factor_last_used_timestep'] as $column) {
+        expect($array)->not->toHaveKey($column)
+            ->and($json)->not->toContain($column);
+    }
+
+    // The confirmed_at marker stays visible so hosts can render enrolment state.
+    expect($array)->toHaveKey('two_factor_confirmed_at');
 });
 
 it('defaults the provisioning label to the email', function (): void {

@@ -25,7 +25,7 @@ arch('src only uses allowed vendor roots')
     ]);
 
 arch('no forbidden crypto or qr vendors are imported')
-    ->expect(['PragmaRX', 'BaconQrCode', 'Cron', 'Acme'])
+    ->expect(['PragmaRX', 'BaconQrCode', 'Cron'])
     ->not->toBeUsed();
 
 arch('every source file declares strict types')

@@ -12,7 +12,7 @@ code is rendered client-side from the `otpauth://` URI, so no image library ship
 
 - RFC 4226 / RFC 6238 TOTP built on `hash_hmac` + a native RFC 4648 base32 codec.
 - Constant-time verification (`hash_equals`) and replay protection (a code can't be reused).
-- Encrypted secret + recovery-code storage via Laravel's `encrypted` casts.
+- Encrypted TOTP secret and hashed (one-way) recovery codes at rest, both hidden from serialization.
 - Ergonomic surface: a `TwoFactor` facade, lifecycle Actions, a user-model trait, and events.
 - **Standards-compatible** — existing TOTP secrets from standard authenticator apps keep verifying unchanged.
 
@@ -58,22 +58,31 @@ The package works with **zero configuration** — every key has a safe default.
 ```php
 return [
     // TOTP parameters — defaults match standard authenticator apps (RFC 6238).
+    // Bounds are enforced at runtime; out-of-range values throw
+    // InvalidTwoFactorConfigException rather than silently weakening 2FA.
     'algorithm' => 'sha1',        // 'sha1' | 'sha256' | 'sha512'
-    'digits' => 6,
-    'period' => 30,               // seconds per timestep
-    'window' => 1,                // accept ±N timesteps of drift
-    'secret_length' => 16,        // base32 chars
+    'digits' => 6,                // 6–8
+    'period' => 30,               // 15–120 seconds per timestep
+    'window' => 1,                // 0–2: accept ±N timesteps of drift
+    'secret_length' => 32,        // base32 chars (≥16); 32 = 160 bits
 
     // Provisioning (otpauth:// URI). issuer falls back to config('app.name') at runtime.
     'issuer' => env('TWO_FACTOR_ISSUER'),
 
     'recovery_codes' => [
         'count' => 8,
-        'storage' => 'encrypted', // 'encrypted' (default) | 'hashed'
+        'storage' => 'hashed',    // 'hashed' (default) | 'encrypted'
+    ],
+
+    // Built-in brute-force limiter for verifyFor(), keyed per user. Set to null
+    // to disable it and rely on your own throttle middleware instead.
+    'attempts' => [
+        'max' => 5,               // failed attempts before lockout
+        'decay' => 60,            // seconds the lockout lasts
     ],
 
     // Replay protection: reject any code whose timestep <= the last successful one.
-    'replay_guard' => 'column',   // 'column' | 'cache' | null
+    'replay_guard' => 'column',   // 'column' | 'cache' | 'none' (null → none)
     'cache' => [
         'store' => env('TWO_FACTOR_CACHE_STORE'),
         'ttl' => 60 * 60 * 24,
@@ -92,17 +101,24 @@ return [
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `algorithm` | string | `sha1` | HMAC hash; `sha1` for authenticator-app compatibility |
-| `digits` | int | `6` | Code length |
-| `period` | int | `30` | Seconds per timestep |
-| `window` | int | `1` | Accepted drift in ± timesteps |
-| `secret_length` | int | `16` | Base32 secret length |
+| `digits` | int | `6` | Code length (6–8) |
+| `period` | int | `30` | Seconds per timestep (15–120) |
+| `window` | int | `1` | Accepted drift in ± timesteps (0–2) |
+| `secret_length` | int | `32` | Base32 secret length (≥16); 32 chars = 160 bits |
 | `issuer` | string\|null | `env('TWO_FACTOR_ISSUER')` | Provisioning issuer; falls back to `config('app.name')` |
 | `recovery_codes.count` | int | `8` | Recovery codes generated per enrolment |
-| `recovery_codes.storage` | string | `encrypted` | `encrypted` (reversible) or `hashed` (one-way) |
-| `replay_guard` | string\|null | `column` | Last-used-timestep store: `column`, `cache`, or `null` |
+| `recovery_codes.storage` | string | `hashed` | `hashed` (one-way, default) or `encrypted` (reversible, display-again) |
+| `attempts` | array\|null | `['max' => 5, 'decay' => 60]` | Built-in per-user brute-force limiter; `null` disables it |
+| `attempts.max` | int | `5` | Failed attempts before lockout |
+| `attempts.decay` | int | `60` | Seconds the lockout lasts |
+| `replay_guard` | string\|null | `column` | Last-used-timestep store: `column`, `cache`, or `none`/`null` |
 | `cache.store` | string\|null | `env('TWO_FACTOR_CACHE_STORE')` | Cache store for the `cache` guard |
 | `cache.ttl` | int | `86400` | Seconds to retain the last timestep in `cache` mode |
 | `columns.*` | string | — | Column names on the `users` table |
+
+The `replay_guard`, `recovery_codes.storage`, and `algorithm` values are backed by the
+`ReplayGuardMode`, `RecoveryCodeStorage`, and `HashAlgorithm` enums — an unknown value throws
+`InvalidTwoFactorConfigException` at resolution.
 
 **Env vars:** `TWO_FACTOR_ISSUER`, `TWO_FACTOR_CACHE_STORE`.
 
@@ -161,15 +177,29 @@ app(ConfirmEnrolment::class)->execute($user, $request->string('code'));
 ### Verify during login
 
 ```php
+use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 
-if (TwoFactor::verifyFor($user, $request->string('code'))) {
-    // accepted — TOTP (replay-safe) or a single-use recovery code
+try {
+    if (TwoFactor::verifyFor($user, $request->string('code'))) {
+        // accepted — TOTP (replay-safe) or a single-use recovery code
+    }
+} catch (TwoFactorRateLimitedException $e) {
+    // too many failed attempts — retry after $e->secondsUntilAvailable seconds
 }
 ```
 
 `verifyFor()` checks the TOTP code with replay protection first, then falls back to a
-single-use recovery code (consuming it). A code whose timestep was already used is rejected.
+single-use recovery code (consuming it). A code whose timestep was already used is rejected,
+and so is any code for a user whose enrolment is still **pending** (`confirmed_at` unset) —
+only a confirmed second factor can satisfy a challenge.
+
+**Built-in brute-force limiter.** `verifyFor()` throttles per user out of the box: after
+`attempts.max` (default 5) failed attempts within `attempts.decay` seconds (default 60) it
+throws `TwoFactorRateLimitedException` before doing any verification work, and dispatches a
+`TwoFactorRateLimited` event. A successful verification clears the counter. Set
+`config('two-factor.attempts')` to `null` to disable it entirely and use your own `throttle:`
+middleware instead.
 
 ### Disable & regenerate
 
@@ -212,27 +242,46 @@ $codes  = TwoFactor::generateRecoveryCodes();                   // list<string>
 
 ## Security
 
-- **Encrypted at rest** — the secret and recovery codes are stored through Laravel's
-  `encrypted` casts (your `APP_KEY`).
+- **Encrypted secret at rest** — the TOTP secret is stored through Laravel's `encrypted` cast
+  (your `APP_KEY`). Recovery codes are **hashed** one-way by default (see below).
+- **Hidden from serialization** — the trait pushes `two_factor_secret`,
+  `two_factor_recovery_codes`, and `two_factor_last_used_timestep` into the model's `$hidden`
+  automatically, so `return $user;` from a route or `$user->toArray()`/`toJson()` never leaks
+  the decrypted secret or codes. (`two_factor_confirmed_at` stays visible for UI state.)
 - **Constant-time compare** — every code comparison uses `hash_equals`; the package never
   uses `===`, `md5`, or `sha1` for comparisons.
-- **Replay protection** — the matched timestep is persisted; any code with a timestep `<=`
-  the last successful one is rejected and a `TwoFactorReplayDetected` event fires. For
-  multi-node hosts, use the `cache` guard backed by an atomic store (Redis / database). The
-  code used to *confirm* enrolment is recorded in the replay guard too, so it cannot double
-  as the first login code — the user simply waits for the next 30s step.
-- **Single-use recovery codes** — a consumed recovery code is removed from the stored set.
-- **Rate limiting is the host's job** — apply a `throttle:` middleware to your 2FA challenge
-  route; the package ships no limiter but surfaces typed exceptions and events to drive one.
+- **Atomic replay protection** — the matched timestep is claimed in a single check-and-set, so
+  two concurrent submissions of the same code cannot both succeed. Any code with a timestep
+  `<=` the last successful one is rejected and a `TwoFactorReplayDetected` event fires. The
+  code used to *confirm* enrolment is claimed too, so it cannot double as the first login code.
+  For multi-node hosts, use the `cache` guard backed by an atomic store (Redis / database).
+- **Atomic single-use recovery codes** — consumption re-reads the row under a transaction lock
+  before removing the matched code, so a code phished once cannot be raced through twice.
+- **Built-in brute-force limiter** — `verifyFor()` ships a per-user throttle on by default
+  (`attempts.max` / `attempts.decay`), throwing `TwoFactorRateLimitedException` on lockout. Set
+  `attempts` to `null` to opt out and run your own `throttle:` middleware.
+- **Bounds-checked config** — `digits` (6–8), `period` (15–120), `window` (0–2) and
+  `secret_length` (≥16) are validated at runtime; a misconfiguration throws
+  `InvalidTwoFactorConfigException` instead of silently degrading to weak 2FA.
 - `#[SensitiveParameter]` is applied to every secret/code argument so they never leak into
   stack traces; the package never logs secrets or codes.
 
-### Encrypted vs. hashed recovery codes
+### Hashed vs. encrypted recovery codes
 
-The default `encrypted` mode keeps the plaintext codes encrypted at rest, so they can be
-compared literally. The opt-in `hashed` mode stores one-way `Hash::make()` hashes instead.
-**Switching modes invalidates existing stored codes** — only change `recovery_codes.storage`
-on a fresh enrolment base, and regenerate codes for enrolled users if you switch.
+The default `hashed` mode stores one-way `Hash::make()` hashes — a database dump plus a leaked
+`APP_KEY` never yields live recovery codes. The opt-in `encrypted` mode keeps the plaintext
+codes encrypted at rest so a host can display them again after enrolment, at the cost of being
+reversible with `APP_KEY`. **Switching modes invalidates existing stored codes** — only change
+`recovery_codes.storage` on a fresh enrolment base, and regenerate codes for enrolled users if
+you switch.
+
+### Cache replay-guard caveat
+
+The `cache` guard claims each timestep atomically via the store's lock (Redis, Memcached,
+database, file, array all provide one). Be aware that a cache flush or eviction (`cache:clear`,
+a deploy, LRU pressure) drops the last-used timestep and momentarily reopens the replay window.
+Where that risk is unacceptable, use the default `column` guard, which persists to the users
+table.
 
 ## Events
 
@@ -248,6 +297,7 @@ All events carry the user model only (no secrets/codes):
 | `TwoFactorVerified` | a user passes a challenge (`viaRecoveryCode: bool` on the event) |
 | `TwoFactorVerificationFailed` | an enrolled user fails a challenge (not on replay/no-secret) |
 | `TwoFactorReplayDetected` | a code with an already-used timestep is rejected |
+| `TwoFactorRateLimited` | the built-in limiter locks a user out (carries `secondsUntilAvailable`) |
 
 `TwoFactorVerified` / `TwoFactorVerificationFailed` let you audit challenges, meter
 success/failure rates, and drive host-side lockout without wrapping the facade — e.g. a
@@ -262,9 +312,11 @@ Event::listen(function (TwoFactorVerificationFailed $event): void {
 ## Migrating from another TOTP library
 
 This package is **byte-compatible** with the standard TOTP profile (SHA1, 6 digits, 30s) used
-by common authenticator apps and libraries. Existing secrets and encrypted recovery codes keep
-verifying under the same `APP_KEY` with no data migration — just add the
-`two_factor_last_used_timestep` column (via the macro/migration) to enable replay protection.
+by common authenticator apps and libraries. Existing secrets keep verifying under the same
+`APP_KEY` with no data migration — just add the `two_factor_last_used_timestep` column (via the
+macro/migration) to enable replay protection. If you are importing existing plaintext/encrypted
+recovery codes, set `recovery_codes.storage` to `encrypted` so they still match (the default is
+`hashed`).
 Compatibility is proven by committed static parity fixtures; no third-party TOTP library is a
 dependency of this package.
 

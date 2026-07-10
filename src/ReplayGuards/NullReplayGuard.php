@@ -9,7 +9,7 @@ use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 
 /**
- * Disables replay protection entirely — never records, never rejects.
+ * Disables replay protection entirely — every claim succeeds, nothing is tracked.
  */
 final class NullReplayGuard implements ReplayGuard
 {
@@ -18,13 +18,9 @@ final class NullReplayGuard implements ReplayGuard
         return null;
     }
 
-    public function record(TwoFactorAuthenticatable&Model $user, int $timestep): void
+    public function claim(TwoFactorAuthenticatable&Model $user, int $timestep): bool
     {
-        // Intentionally a no-op: replay protection is disabled.
-    }
-
-    public function reject(TwoFactorAuthenticatable&Model $user, int $timestep): bool
-    {
-        return false;
+        // Replay protection is disabled: always allow the timestep.
+        return true;
     }
 }

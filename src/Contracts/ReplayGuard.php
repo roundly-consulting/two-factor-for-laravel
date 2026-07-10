@@ -12,13 +12,16 @@ use Illuminate\Database\Eloquent\Model;
  */
 interface ReplayGuard
 {
+    /**
+     * The latest recorded timestep for introspection (or null when none yet).
+     */
     public function latestTimestep(TwoFactorAuthenticatable&Model $user): ?int;
 
-    public function record(TwoFactorAuthenticatable&Model $user, int $timestep): void;
-
     /**
-     * Whether a code at $timestep must be rejected as a replay (timestep already
-     * used, i.e. <= the latest recorded one).
+     * Atomically claim $timestep for the user in a single check-and-set. Returns
+     * true when the timestep was newly claimed (the code may be accepted) and
+     * false when it was already used — a replay — so two concurrent submissions
+     * of the same code cannot both succeed.
      */
-    public function reject(TwoFactorAuthenticatable&Model $user, int $timestep): bool;
+    public function claim(TwoFactorAuthenticatable&Model $user, int $timestep): bool;
 }

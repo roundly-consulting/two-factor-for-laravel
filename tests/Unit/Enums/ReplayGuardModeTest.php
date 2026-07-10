@@ -1,0 +1,26 @@
+<?php
+
+declare(strict_types=1);
+
+use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
+
+it('exposes the three backed modes', function (): void {
+    expect(ReplayGuardMode::values()->all())->toBe(['column', 'cache', 'none']);
+});
+
+it('resolves configured mode strings', function (string $value, ReplayGuardMode $mode): void {
+    expect(ReplayGuardMode::fromConfig($value))->toBe($mode);
+})->with([
+    'column' => ['column', ReplayGuardMode::Column],
+    'cache' => ['cache', ReplayGuardMode::Cache],
+    'none' => ['none', ReplayGuardMode::None],
+]);
+
+it('treats a null config value as none', function (): void {
+    expect(ReplayGuardMode::fromConfig(null))->toBe(ReplayGuardMode::None);
+});
+
+it('throws on an unknown mode', function (): void {
+    ReplayGuardMode::fromConfig('bogus');
+})->throws(InvalidTwoFactorConfigException::class);

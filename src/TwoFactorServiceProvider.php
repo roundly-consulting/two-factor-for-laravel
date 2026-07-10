@@ -11,7 +11,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\ServiceProvider;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
-use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
+use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
 use RoundlyConsulting\TwoFactor\ReplayGuards\CacheReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\ColumnReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\NullReplayGuard;
@@ -52,17 +52,14 @@ final class TwoFactorServiceProvider extends ServiceProvider
 
     private function resolveReplayGuard(Application $app): ReplayGuard
     {
-        $mode = config('two-factor.replay_guard');
-
-        return match ($mode) {
-            'column' => new ColumnReplayGuard,
-            'cache' => new CacheReplayGuard(
+        return match (ReplayGuardMode::fromConfig(config('two-factor.replay_guard'))) {
+            ReplayGuardMode::Column => new ColumnReplayGuard,
+            ReplayGuardMode::Cache => new CacheReplayGuard(
                 $app->make(CacheFactory::class),
                 $this->nullableString(config('two-factor.cache.store')),
                 (int) config('two-factor.cache.ttl', 86400),
             ),
-            null => new NullReplayGuard,
-            default => throw InvalidTwoFactorConfigException::replayGuard((string) $mode),
+            ReplayGuardMode::None => new NullReplayGuard,
         };
     }
 

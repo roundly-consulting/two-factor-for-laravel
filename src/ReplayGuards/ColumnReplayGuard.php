@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\ReplayGuards;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 
@@ -20,17 +21,31 @@ final class ColumnReplayGuard implements ReplayGuard
         return $value === null ? null : (int) $value;
     }
 
-    public function record(TwoFactorAuthenticatable&Model $user, int $timestep): void
+    public function claim(TwoFactorAuthenticatable&Model $user, int $timestep): bool
     {
-        $user->setAttribute($this->column(), $timestep);
-        $user->save();
-    }
+        $column = $this->column();
 
-    public function reject(TwoFactorAuthenticatable&Model $user, int $timestep): bool
-    {
-        $latest = $this->latestTimestep($user);
+        // A single conditional UPDATE is the whole claim: the row is locked for
+        // the write, so of two concurrent submissions of the same code exactly
+        // one affects a row. Scoped to the timestep column via the base builder
+        // so no unrelated dirty attribute or updated_at is flushed (finding 11).
+        $affected = $user->newQuery()
+            ->toBase()
+            ->where($user->getKeyName(), $user->getKey())
+            ->where(function (Builder $query) use ($column, $timestep): void {
+                $query->whereNull($column)->orWhere($column, '<', $timestep);
+            })
+            ->update([$column => $timestep]);
 
-        return $latest !== null && $timestep <= $latest;
+        if ($affected > 0) {
+            // Keep the in-memory model consistent without marking it dirty.
+            $user->setAttribute($column, $timestep);
+            $user->syncOriginalAttribute($column);
+
+            return true;
+        }
+
+        return false;
     }
 
     private function column(): string

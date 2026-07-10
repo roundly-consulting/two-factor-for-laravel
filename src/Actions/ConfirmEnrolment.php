@@ -54,7 +54,7 @@ final class ConfirmEnrolment
 
         // Spend the confirming timestep so the exact code just typed cannot be
         // replayed once at the first login (security hardening — no crypto change).
-        $this->replayGuard->record($user, $timestep);
+        $this->replayGuard->claim($user, $timestep);
 
         $this->events?->dispatch(new TwoFactorConfirmed($user));
     }

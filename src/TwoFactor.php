@@ -6,16 +6,21 @@ namespace RoundlyConsulting\TwoFactor;
 
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\RateLimiter;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\AttemptLimit;
 use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
+use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Support\Base32;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 use RoundlyConsulting\TwoFactor\Support\Totp;
 use SensitiveParameter;
@@ -36,7 +41,7 @@ final class TwoFactor implements TwoFactorService
      */
     public function generateSecret(?int $length = null): string
     {
-        $length ??= (int) config('two-factor.secret_length', 16);
+        $length ??= ConfigGuard::secretLength();
 
         // Each base32 char encodes 5 bits; over-generate raw bytes then trim so
         // the output is exactly $length characters over the RFC 4648 alphabet.
@@ -59,7 +64,7 @@ final class TwoFactor implements TwoFactorService
         #[SensitiveParameter] string $code,
         ?int $window = null,
     ): int|false {
-        $window ??= (int) config('two-factor.window', 1);
+        $window ??= ConfigGuard::window();
 
         return $this->totp()->verify($secret, $code, $window);
     }
@@ -70,34 +75,53 @@ final class TwoFactor implements TwoFactorService
      */
     public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
     {
+        // Only a fully confirmed enrolment can satisfy a login challenge; a
+        // secret that was persisted but never confirmed is not a working second
+        // factor (finding 7).
+        if (! $user->hasTwoFactorEnabled()) {
+            return false;
+        }
+
         $secret = $user->twoFactorSecret();
 
         if ($secret === null) {
             return false;
         }
 
+        $limit = ConfigGuard::attemptLimit();
+        $key = $this->rateLimiterKey($user);
+
+        if ($limit !== null && RateLimiter::tooManyAttempts($key, $limit->max)) {
+            $seconds = RateLimiter::availableIn($key);
+            $this->events?->dispatch(new TwoFactorRateLimited($user, $seconds));
+
+            throw TwoFactorRateLimitedException::make($seconds);
+        }
+
         $timestep = $this->verify($secret, $code);
 
         if ($timestep !== false) {
-            if ($this->replayGuard->reject($user, $timestep)) {
+            if (! $this->replayGuard->claim($user, $timestep)) {
+                $this->registerFailure($limit, $key);
                 $this->events?->dispatch(new TwoFactorReplayDetected($user, $timestep));
 
                 return false;
             }
 
-            $this->replayGuard->record($user, $timestep);
-
+            $this->clearAttempts($limit, $key);
             $this->events?->dispatch(new TwoFactorVerified($user, viaRecoveryCode: false));
 
             return true;
         }
 
         if ($this->consumeRecoveryCode($user, $code)) {
+            $this->clearAttempts($limit, $key);
             $this->events?->dispatch(new TwoFactorVerified($user, viaRecoveryCode: true));
 
             return true;
         }
 
+        $this->registerFailure($limit, $key);
         $this->events?->dispatch(new TwoFactorVerificationFailed($user));
 
         return false;
@@ -115,8 +139,8 @@ final class TwoFactor implements TwoFactorService
             'secret' => $secret,
             'issuer' => $issuer,
             'algorithm' => $algorithm,
-            'digits' => (int) config('two-factor.digits', 6),
-            'period' => (int) config('two-factor.period', 30),
+            'digits' => ConfigGuard::digits(),
+            'period' => ConfigGuard::period(),
         ], '', '&', PHP_QUERY_RFC3986);
 
         return sprintf(
@@ -140,26 +164,72 @@ final class TwoFactor implements TwoFactorService
     private function consumeRecoveryCode(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
     {
         $manager = $this->recoveryCodes();
-        $remaining = $manager->consume($user->twoFactorRecoveryCodes(), $code);
+        $column = (string) config('two-factor.columns.recovery_codes');
 
-        if ($remaining === null) {
+        // Consume under a transaction with a locked, fresh re-read of the row so
+        // two concurrent requests carrying the same code cannot both match a
+        // stale in-memory list and double-spend it (finding 1). The write is
+        // scoped to the freshly-loaded row, never the host's own instance, so no
+        // unrelated dirty attribute is flushed (finding 11).
+        $consumed = $user->getConnection()->transaction(function () use ($user, $code, $manager, $column): bool {
+            /** @var (TwoFactorAuthenticatable&Model)|null $locked */
+            $locked = $user->newQuery()->lockForUpdate()->find($user->getKey());
+
+            if ($locked === null) {
+                return false;
+            }
+
+            $remaining = $manager->consume($locked->twoFactorRecoveryCodes(), $code);
+
+            if ($remaining === null) {
+                return false;
+            }
+
+            $locked->timestamps = false;
+            $locked->setAttribute($column, $remaining);
+            $locked->save();
+
+            // Reflect the consumption on the caller's instance for read-back.
+            $user->setAttribute($column, $remaining);
+            $user->syncOriginalAttribute($column);
+
+            return true;
+        });
+
+        if (! $consumed) {
             return false;
         }
-
-        $user->setAttribute((string) config('two-factor.columns.recovery_codes'), $remaining);
-        $user->save();
 
         $this->events?->dispatch(new RecoveryCodeConsumed($user));
 
         return true;
     }
 
+    private function registerFailure(?AttemptLimit $limit, string $key): void
+    {
+        if ($limit !== null) {
+            RateLimiter::hit($key, $limit->decay);
+        }
+    }
+
+    private function clearAttempts(?AttemptLimit $limit, string $key): void
+    {
+        if ($limit !== null) {
+            RateLimiter::clear($key);
+        }
+    }
+
+    private function rateLimiterKey(TwoFactorAuthenticatable&Model $user): string
+    {
+        return 'two-factor:'.$user::class.':'.$user->getKey();
+    }
+
     private function totp(): Totp
     {
         return new Totp(
             $this->algorithm(),
-            (int) config('two-factor.digits', 6),
-            (int) config('two-factor.period', 30),
+            ConfigGuard::digits(),
+            ConfigGuard::period(),
         );
     }
 

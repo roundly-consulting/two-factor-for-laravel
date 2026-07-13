@@ -10,8 +10,9 @@ Native RFC 6238 TOTP two-factor authentication for Laravel — encrypted secrets
 recovery codes and replay protection, with **zero third-party crypto dependencies**. The QR
 code is rendered client-side from the `otpauth://` URI, so no image library ships here.
 
-- RFC 4226 / RFC 6238 TOTP built on `hash_hmac` + a native RFC 4648 base32 codec.
-- Constant-time verification (`hash_equals`) and replay protection (a code can't be reused).
+- RFC 4226 / RFC 6238 TOTP and the RFC 4648 base32 codec, from our own
+  [crypto-for-laravel](https://github.com/roundly-consulting/crypto-for-laravel).
+- Constant-time verification and replay protection (a code can't be reused).
 - Encrypted TOTP secret and hashed (one-way) recovery codes at rest, both hidden from serialization.
 - Ergonomic surface: a `TwoFactor` facade, lifecycle Actions, a user-model trait, and events.
 - **Standards-compatible** — existing TOTP secrets from standard authenticator apps keep verifying unchanged.
@@ -20,6 +21,22 @@ code is rendered client-side from the `otpauth://` URI, so no image library ship
 
 - PHP `^8.4`
 - Laravel `^12.0 | ^13.0`
+
+## Integrates with
+
+- **[crypto-for-laravel](https://github.com/roundly-consulting/crypto-for-laravel)** — a hard
+  dependency that owns every cryptographic primitive this package uses: the HOTP/TOTP maths
+  (`Crypto\Otp\Totp`), the `otpauth://` provisioning URI, the strict base32 codec
+  (`Crypto\Codec\Base32`), the CSPRNG secret generator (`Crypto\Random\Secret`), and the
+  constant-time comparison. Nothing crypto is re-implemented here; this package owns the
+  Laravel-side ceremony — enrolment, confirmation, replay guards, recovery codes, rate
+  limiting, and the encrypted-at-rest columns.
+
+  Crypto is **zero-config**: this package's own `config/two-factor.php` (algorithm, digits,
+  period, window, secret length) still drives everything, and every failure is translated back
+  into a `TwoFactorException` — a malformed secret still surfaces as `InvalidBase32Exception`,
+  a bad code as `InvalidTwoFactorCodeException`, a bad setting as
+  `InvalidTwoFactorConfigException`.
 
 ## Installation
 
@@ -116,9 +133,10 @@ return [
 | `cache.ttl` | int | `86400` | Seconds to retain the last timestep in `cache` mode |
 | `columns.*` | string | — | Column names on the `users` table |
 
-The `replay_guard`, `recovery_codes.storage`, and `algorithm` values are backed by the
-`ReplayGuardMode`, `RecoveryCodeStorage`, and `HashAlgorithm` enums — an unknown value throws
-`InvalidTwoFactorConfigException` at resolution.
+The `replay_guard` and `recovery_codes.storage` values are backed by the `ReplayGuardMode` and
+`RecoveryCodeStorage` enums, and `algorithm` by crypto's `Otp\OtpAlgorithm` (`sha1` | `sha256` |
+`sha512`) — an unknown value throws `InvalidTwoFactorConfigException` at resolution, never a
+silent hash downgrade.
 
 **Env vars:** `TWO_FACTOR_ISSUER`, `TWO_FACTOR_CACHE_STORE`.
 
@@ -248,8 +266,8 @@ $codes  = TwoFactor::generateRecoveryCodes();                   // list<string>
   `two_factor_recovery_codes`, and `two_factor_last_used_timestep` into the model's `$hidden`
   automatically, so `return $user;` from a route or `$user->toArray()`/`toJson()` never leaks
   the decrypted secret or codes. (`two_factor_confirmed_at` stays visible for UI state.)
-- **Constant-time compare** — every code comparison uses `hash_equals`; the package never
-  uses `===`, `md5`, or `sha1` for comparisons.
+- **Constant-time compare** — every code comparison goes through crypto's `ConstantTime`; the
+  package never uses `===`, `md5`, or `sha1` for comparisons.
 - **Atomic replay protection** — the matched timestep is claimed in a single check-and-set, so
   two concurrent submissions of the same code cannot both succeed. Any code with a timestep
   `<=` the last successful one is rejected and a `TwoFactorReplayDetected` event fires. The

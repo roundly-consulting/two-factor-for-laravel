@@ -62,6 +62,15 @@ final class InvalidTwoFactorConfigException extends TwoFactorException
         ));
     }
 
+    public static function secretLengthTooLong(int $value, int $maximum): self
+    {
+        return new self(sprintf(
+            'Invalid two-factor "secret_length" (%d); expected at most %d base32 characters.',
+            $value,
+            $maximum,
+        ));
+    }
+
     public static function attempts(string $key, int $value): self
     {
         return new self(sprintf(

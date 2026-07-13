@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Support;
 
 use Illuminate\Support\Facades\Hash;
+use RoundlyConsulting\Crypto\Hash\ConstantTime;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use SensitiveParameter;
 
@@ -12,7 +13,7 @@ use SensitiveParameter;
  * Generates, formats and single-use-consumes recovery codes.
  *
  * In encrypted mode the stored value is the plaintext code (kept encrypted at
- * rest by the model cast) and matched with hash_equals. In hashed mode the
+ * rest by the model cast) and matched in constant time. In hashed mode the
  * stored value is a one-way hash matched with Hash::check.
  */
 final readonly class RecoveryCodeManager
@@ -80,7 +81,7 @@ final readonly class RecoveryCodeManager
             return Hash::check($candidate, $storedCode);
         }
 
-        return hash_equals($storedCode, $candidate);
+        return ConstantTime::equals($storedCode, $candidate);
     }
 
     private function segment(): string

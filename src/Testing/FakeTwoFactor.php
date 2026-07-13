@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Testing;
 
 use Illuminate\Database\Eloquent\Model;
+use RoundlyConsulting\Crypto\Hash\ConstantTime;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAssertionFailedException;
@@ -243,7 +244,7 @@ final class FakeTwoFactor implements TwoFactorService
     private function passes(#[SensitiveParameter] string $code): bool
     {
         if ($this->onlyCode !== null) {
-            return hash_equals($this->onlyCode, $code);
+            return ConstantTime::equals($this->onlyCode, $code);
         }
 
         return $this->accepts;

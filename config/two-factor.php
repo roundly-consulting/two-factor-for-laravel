@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
+use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
 
@@ -10,7 +10,7 @@ return [
     // TOTP parameters — defaults match standard authenticator apps (RFC 6238).
     // Bounds are enforced at runtime; out-of-range values throw
     // InvalidTwoFactorConfigException rather than silently weakening 2FA.
-    'algorithm' => HashAlgorithm::Sha1->value,   // 'sha1' | 'sha256' | 'sha512'
+    'algorithm' => OtpAlgorithm::Sha1->value,     // 'sha1' | 'sha256' | 'sha512'
     'digits' => 6,                                // 6–8
     'period' => 30,                               // 15–120 seconds per timestep
     'window' => 1,                                // 0–2: accept ±N timesteps of drift

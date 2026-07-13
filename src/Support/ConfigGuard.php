@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace RoundlyConsulting\TwoFactor\Support;
 
+use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
+use RoundlyConsulting\Crypto\Random\Secret;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\AttemptLimit;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
 
@@ -11,9 +13,32 @@ use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
  * Reads and bounds-checks the security-sensitive TOTP config so a misconfigured
  * host fails loudly rather than silently degrading to near-useless 2FA (a
  * ±15-minute window, a 4-digit code space, an empty secret, and so on).
+ *
+ * These bounds are deliberately tighter than the ones crypto-for-laravel itself
+ * enforces, so a value this guard accepts is always a value the OTP primitives
+ * accept — the package's own InvalidTwoFactorConfigException stays the single
+ * failure mode a host has to catch.
  */
 final class ConfigGuard
 {
+    /**
+     * The configured HMAC algorithm, as the OTP primitive's enum.
+     *
+     * The backing values are the same three strings the package has always
+     * accepted ('sha1' | 'sha256' | 'sha512'), so a host's existing config keeps
+     * its exact meaning.
+     *
+     * @throws InvalidTwoFactorConfigException on an unsupported value, rather than
+     *                                         silently downgrading the hash
+     */
+    public static function algorithm(): OtpAlgorithm
+    {
+        $value = (string) config('two-factor.algorithm');
+
+        return OtpAlgorithm::tryFrom($value)
+            ?? throw InvalidTwoFactorConfigException::algorithm($value);
+    }
+
     public static function digits(): int
     {
         $digits = (int) config('two-factor.digits', 6);
@@ -49,10 +74,22 @@ final class ConfigGuard
 
     public static function secretLength(): int
     {
-        $length = (int) config('two-factor.secret_length', 32);
+        return self::assertSecretLength((int) config('two-factor.secret_length', 32));
+    }
 
+    /**
+     * Bound a secret length — from config or from an explicit caller argument —
+     * before it reaches the generator, so an out-of-range length always surfaces
+     * as this package's config exception.
+     */
+    public static function assertSecretLength(int $length): int
+    {
         if ($length < 16) {
             throw InvalidTwoFactorConfigException::secretLength($length);
+        }
+
+        if ($length > Secret::MAXIMUM_CHARS) {
+            throw InvalidTwoFactorConfigException::secretLengthTooLong($length, Secret::MAXIMUM_CHARS);
         }
 
         return $length;

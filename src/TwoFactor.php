@@ -7,27 +7,36 @@ namespace RoundlyConsulting\TwoFactor;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\RateLimiter;
+use RoundlyConsulting\Crypto\Codec\InvalidEncodingException;
+use RoundlyConsulting\Crypto\Otp\InvalidOtpParameterException;
+use RoundlyConsulting\Crypto\Otp\ProvisioningUri;
+use RoundlyConsulting\Crypto\Otp\Totp;
+use RoundlyConsulting\Crypto\Random\Secret;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\AttemptLimit;
-use RoundlyConsulting\TwoFactor\Enums\HashAlgorithm;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
-use RoundlyConsulting\TwoFactor\Support\Base32;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
-use RoundlyConsulting\TwoFactor\Support\Totp;
 use SensitiveParameter;
 
 /**
  * The package's public entry point: TOTP primitives plus the replay-safe,
  * recovery-aware verifyFor() used during a login challenge.
+ *
+ * The OTP maths, the base32 codec and the CSPRNG all come from
+ * crypto-for-laravel. This class is the boundary: it builds those primitives
+ * from this package's own config and translates every crypto failure back into
+ * the two-factor exception a host already catches.
  */
 final class TwoFactor implements TwoFactorService
 {
@@ -37,27 +46,36 @@ final class TwoFactor implements TwoFactorService
     ) {}
 
     /**
-     * A fresh base32 secret backed by random_bytes.
+     * A fresh base32 secret backed by the CSPRNG.
+     *
+     * @throws InvalidTwoFactorConfigException when the length is out of range
      */
     public function generateSecret(?int $length = null): string
     {
         $length ??= ConfigGuard::secretLength();
 
-        // Each base32 char encodes 5 bits; over-generate raw bytes then trim so
-        // the output is exactly $length characters over the RFC 4648 alphabet.
-        $rawBytes = max(1, (int) ceil($length * 5 / 8) + 1);
-        $bytes = random_bytes($rawBytes);
-
-        return substr(Base32::encode($bytes), 0, max(0, $length));
+        // Bound an explicit caller length by the same rule as the configured one,
+        // so no path can mint a secret below the package's entropy floor.
+        return Secret::base32(ConfigGuard::assertSecretLength($length));
     }
 
+    /**
+     * @throws InvalidBase32Exception when the secret is not valid base32
+     */
     public function currentCode(#[SensitiveParameter] string $secret, ?int $timestamp = null): string
     {
-        return $this->totp()->codeAt($secret, $timestamp);
+        try {
+            return $this->totp()->codeAt($secret, $timestamp);
+        } catch (InvalidEncodingException $e) {
+            throw InvalidBase32Exception::fromCodec($e);
+        }
     }
 
     /**
      * @return int|false the matched timestep, or false
+     *
+     * @throws InvalidBase32Exception when the secret is not valid base32
+     * @throws InvalidTwoFactorConfigException when the window is out of range
      */
     public function verify(
         #[SensitiveParameter] string $secret,
@@ -66,7 +84,15 @@ final class TwoFactor implements TwoFactorService
     ): int|false {
         $window ??= ConfigGuard::window();
 
-        return $this->totp()->verify($secret, $code, $window);
+        try {
+            return $this->totp()->verify($secret, $code, $window);
+        } catch (InvalidEncodingException $e) {
+            throw InvalidBase32Exception::fromCodec($e);
+        } catch (InvalidOtpParameterException) {
+            // The only parameter the caller can still push out of range here is
+            // the explicit window; digits/period came through ConfigGuard.
+            throw InvalidTwoFactorConfigException::window($window);
+        }
     }
 
     /**
@@ -132,22 +158,13 @@ final class TwoFactor implements TwoFactorService
         string $label,
         ?string $issuer = null,
     ): string {
-        $issuer ??= $this->issuer();
-        $algorithm = strtoupper($this->algorithm()->value);
-
-        $query = http_build_query([
-            'secret' => $secret,
-            'issuer' => $issuer,
-            'algorithm' => $algorithm,
-            'digits' => ConfigGuard::digits(),
-            'period' => ConfigGuard::period(),
-        ], '', '&', PHP_QUERY_RFC3986);
-
-        return sprintf(
-            'otpauth://totp/%s:%s?%s',
-            rawurlencode($issuer),
-            rawurlencode($label),
-            $query,
+        return ProvisioningUri::totp(
+            $secret,
+            $label,
+            $issuer ?? $this->issuer(),
+            ConfigGuard::algorithm(),
+            ConfigGuard::digits(),
+            ConfigGuard::period(),
         );
     }
 
@@ -224,10 +241,14 @@ final class TwoFactor implements TwoFactorService
         return 'two-factor:'.$user::class.':'.$user->getKey();
     }
 
+    /**
+     * The OTP primitive, parameterised from this package's own config. Crypto is
+     * zero-config: every knob is passed in here, bounds-checked first.
+     */
     private function totp(): Totp
     {
         return new Totp(
-            $this->algorithm(),
+            ConfigGuard::algorithm(),
             ConfigGuard::digits(),
             ConfigGuard::period(),
         );
@@ -238,11 +259,6 @@ final class TwoFactor implements TwoFactorService
         return new RecoveryCodeManager(
             RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
         );
-    }
-
-    private function algorithm(): HashAlgorithm
-    {
-        return HashAlgorithm::fromConfig((string) config('two-factor.algorithm'));
     }
 
     private function issuer(): string

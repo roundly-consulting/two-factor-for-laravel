@@ -163,11 +163,18 @@ final class FakeTwoFactor implements TwoFactorService
             return $this->recoveryCodes;
         }
 
-        $count ??= 8;
+        // range(1, 0) counts *down* — it yields [1, 0], so a zero or negative
+        // count has to short-circuit or the fake hands back codes nobody asked
+        // for (the real service returns an empty list).
+        $count = max(0, $count ?? 8);
+
+        if ($count === 0) {
+            return [];
+        }
 
         return array_map(
             static fn (int $i): string => sprintf('FAKE-%04d-%04d', $i, $i),
-            range(1, max(0, $count)),
+            range(1, $count),
         );
     }
 

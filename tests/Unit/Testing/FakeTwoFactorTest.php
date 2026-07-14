@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAssertionFailedException;
+use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 use RoundlyConsulting\TwoFactor\Testing\FakeTwoFactor;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
@@ -58,6 +59,17 @@ it('returns canned recovery codes by count', function (): void {
     expect($fake->generateRecoveryCodes())->toHaveCount(8)
         ->and($fake->generateRecoveryCodes(3))->toHaveCount(3);
 });
+
+it('hands back no recovery codes when none are asked for', function (int $count): void {
+    $fake = new FakeTwoFactor;
+
+    // The fake must agree with the real service, which returns an empty list.
+    expect($fake->generateRecoveryCodes($count))
+        ->toBe(app(RecoveryCodeManager::class)->generate($count));
+})->with([
+    'zero' => [0],
+    'negative' => [-3],
+]);
 
 it('returns programmed recovery codes when set', function (): void {
     $fake = (new FakeTwoFactor)->withRecoveryCodes('a', 'b');

@@ -38,18 +38,28 @@ code is rendered client-side from the `otpauth://` URI, so no image library ship
   a bad code as `InvalidTwoFactorCodeException`, a bad setting as
   `InvalidTwoFactorConfigException`.
 
+- **[package-toolkit-for-laravel](https://github.com/roundly-consulting/package-toolkit-for-laravel)**
+  — a hard dependency that provides the service-provider base this package is built on: the
+  config merge/publish wiring, the publish-only migration handling, and the
+  `php artisan about --only=two-factor` section (which reports the TOTP parameters, the replay
+  guard and the attempt limit — never a secret, a recovery code, the issuer or a store name).
+
 ## Installation
 
 ```bash
 composer require roundly-consulting/two-factor-for-laravel
 ```
 
-Publish the migration (it stamps its own timestamp on publish) and run it:
+**Migrations are publish-only** — nothing is auto-loaded from the package, so publish the
+migration (it stamps its own timestamp on publish) and then migrate:
 
 ```bash
 php artisan vendor:publish --tag="two-factor-migrations"
 php artisan migrate
 ```
+
+Re-publishing overwrites the file it published to last time, so you never end up with two
+copies of the same migration.
 
 The migration adds four nullable columns to your `users` table. If you write your own
 migration instead, use the Blueprint macro:

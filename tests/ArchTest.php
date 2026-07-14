@@ -12,6 +12,7 @@ arch('src only uses allowed vendor roots')
         'RoundlyConsulting\TwoFactor',
         'RoundlyConsulting\Crypto',
         'RoundlyConsulting\Enums',
+        'RoundlyConsulting\PackageToolkit',
         'Illuminate',
         'Carbon',
         'SensitiveParameter',

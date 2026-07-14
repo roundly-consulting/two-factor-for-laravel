@@ -8,20 +8,38 @@ use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\ServiceProvider;
+use RoundlyConsulting\PackageToolkit\Package;
+use RoundlyConsulting\PackageToolkit\PackageServiceProvider;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
 use RoundlyConsulting\TwoFactor\ReplayGuards\CacheReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\ColumnReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\NullReplayGuard;
+use RoundlyConsulting\TwoFactor\Support\AboutSection;
 use RoundlyConsulting\TwoFactor\Support\TwoFactorColumns;
 
-final class TwoFactorServiceProvider extends ServiceProvider
+final class TwoFactorServiceProvider extends PackageServiceProvider
 {
+    public function configurePackage(Package $package): void
+    {
+        // Migrations are publish-only: the package's one migration ALTERs the
+        // host's own users table, so it can only ever run from the host's
+        // database/migrations directory, stamped with a real timestamp.
+        $package
+            ->name('two-factor')
+            ->hasConfigFile()
+            ->hasMigration('add_two_factor_columns_to_users_table')
+            ->contributesToAbout(static fn (): array => AboutSection::payload());
+    }
+
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__.'/../config/two-factor.php', 'two-factor');
+        parent::register();
+
+        // Registered here, not in boot(): the host's published migration calls
+        // twoFactorColumns(), and the migrator can run before boot().
+        $this->registerBlueprintMacros();
 
         $this->app->singleton(ReplayGuard::class, fn (Application $app): ReplayGuard => $this->resolveReplayGuard($app));
 
@@ -31,23 +49,6 @@ final class TwoFactorServiceProvider extends ServiceProvider
         ));
 
         $this->app->alias(TwoFactorService::class, TwoFactor::class);
-    }
-
-    public function boot(): void
-    {
-        $this->registerBlueprintMacros();
-
-        if ($this->app->runningInConsole()) {
-            $this->publishes([
-                __DIR__.'/../config/two-factor.php' => config_path('two-factor.php'),
-            ], 'two-factor-config');
-
-            $this->publishes([
-                __DIR__.'/../database/migrations/add_two_factor_columns_to_users_table.php.stub' => database_path(
-                    'migrations/'.date('Y_m_d_His').'_add_two_factor_columns_to_users_table.php',
-                ),
-            ], 'two-factor-migrations');
-        }
     }
 
     private function resolveReplayGuard(Application $app): ReplayGuard

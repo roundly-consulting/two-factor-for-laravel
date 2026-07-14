@@ -19,7 +19,7 @@ use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
  * @property CarbonInterface|null $two_factor_confirmed_at
  * @property int|null $two_factor_last_used_timestep
  */
-final class TwoFactorUser extends Authenticatable implements TwoFactorAuthenticatable
+class TwoFactorUser extends Authenticatable implements TwoFactorAuthenticatable
 {
     /** @use HasFactory<TwoFactorUserFactory> */
     use HasFactory;

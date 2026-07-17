@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use RoundlyConsulting\Testing\Arch\ArchPresets;
-use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 
 /**
  * The seven presets replace this package's hand-written generic rules. The rules that
@@ -33,79 +32,23 @@ ArchPresets::finalByDefault('RoundlyConsulting\TwoFactor');
  * compares a TOTP code. The fleet removed it from the shared preset on 2026-07-17; this
  * package was one of six still banning it in a local list that never read the shared one.
  */
-// The exemption goes through the preset's `$ignoring` PARAMETER, not Pest's
-// `->ignoring()`. Only the parameter is checked for staleness: `::class` on a
-// non-existent class is not a PHP error (it resolves to a string at compile time), so an
-// exemption that has outlived the code it excused silences nothing and says nothing —
-// leaving the ban applying where you believe it does not. The README's own example uses
-// the unchecked form for this preset; the parameter is strictly better and costs nothing.
-ArchPresets::noLocalCryptoPrimitives('RoundlyConsulting\TwoFactor', [
-    RecoveryCodeManager::class,
-]);
-
 /**
- * The exemption above is NOT a clean bill of health — it is a deferral, and this test is
- * what stops it costing coverage in the meantime.
+ * NO EXEMPTIONS — which is the whole point of this call, and the reason the refactor
+ * behind it was worth doing.
  *
- * `RecoveryCodeManager::segment()` draws recovery-code characters with a local
- * `random_int(0, $max)` loop that is **line for line** crypto-for-laravel's
- * `Random\Token::fromAlphabet()`. That is the exact duplication the preset exists to catch,
- * and the bespoke ban list this file used to carry missed it: it banned `random_bytes` but
- * never `random_int`, so the package's own CSPRNG rule had a hole in the one place it
- * mattered — the generator for the codes that bypass 2FA entirely.
+ * `RecoveryCodeManager::segment()` used to draw recovery-code characters with a local
+ * `random_int(0, $max)` loop that was, line for line, crypto-for-laravel's
+ * `Random\Token::fromAlphabet()`. It now calls exactly that, so the class needs no
+ * exemption and this preset covers it directly.
  *
- * It is not a *vulnerability*: `random_int` is a CSPRNG and the loop samples uniformly, so
- * the codes are exactly as strong as `fromAlphabet()` would make them. Collapsing it onto
- * crypto is therefore a pure refactor — but it is a refactor of recovery-code generation,
- * which is a crypto change, so it waits for a decision rather than being slipped into an
- * adoption row.
- *
- * The cost of the exemption is that Pest's `->ignoring()` is **class-scoped**, not
- * function-scoped: exempting this class to permit one primitive blinds it to all twenty —
- * in the most security-sensitive class in the package. So the ban is re-imposed here by
- * token scan, minus the one call that is deferred. When the refactor lands, this whole
- * block and the `->ignoring()` above are deleted together.
+ * The restored coverage is the real gain, not the shorter generator. Pest's exemptions are
+ * scoped to a **class**, not a function: exempting `RecoveryCodeManager` to permit its one
+ * `random_int` blinded the most security-sensitive class in the package — the generator for
+ * the codes that bypass 2FA entirely — to every other banned primitive. A token-scan
+ * re-imposing the rest used to stand here to buy that back. Routing through crypto deleted
+ * the exemption and that workaround together.
  */
-it('re-imposes every crypto primitive ban on the one exempted class', function (): void {
-    $source = (string) file_get_contents(__DIR__.'/../src/Support/RecoveryCodeManager.php');
-    $tokens = token_get_all($source);
-
-    /** @var list<string> $called */
-    $called = [];
-
-    foreach ($tokens as $index => $token) {
-        if (! is_array($token) || $token[0] !== T_STRING) {
-            continue;
-        }
-
-        // Only a real call — a docblock is a comment token and can never reach here.
-        $next = $tokens[$index + 1] ?? null;
-
-        if ($next === '(' || (is_array($next) && $next[0] === T_WHITESPACE && ($tokens[$index + 2] ?? null) === '(')) {
-            $called[] = $token[1];
-        }
-    }
-
-    // Guard the guard: a scanner that matched nothing would pass vacuously. The deferred
-    // call must actually be there — the day it goes, this test fails and tells you to
-    // delete the exemption rather than quietly protecting nothing.
-    expect($called)->toContain('random_int');
-
-    $banned = array_diff(ArchPresets::CRYPTO_PRIMITIVES, ['random_int']);
-
-    foreach ($banned as $primitive) {
-        // NOT `expect($called)->not->toContain($primitive, $message)`: Pest's `toContain`
-        // is **variadic**, so a "message" passed there is silently taken as a second
-        // NEEDLE, and the negation then passes whenever the two needles are not both
-        // present — i.e. always. That call is vacuous, and it is vacuous in exactly the
-        // shape a reader trusts most (a ban with a helpful message). Asserted through
-        // `in_array` so the message stays a message.
-        expect(in_array($primitive, $called, true))->toBeFalse(
-            "RecoveryCodeManager calls {$primitive}(). It is exempt from the crypto preset only for "
-            .'the deferred random_int() refactor; every other primitive still belongs in crypto-for-laravel.',
-        );
-    }
-});
+ArchPresets::noLocalCryptoPrimitives('RoundlyConsulting\TwoFactor');
 
 /**
  * `modelsResolveThroughSeam` is NOT adopted, with cause. Two-factor ships no Eloquent

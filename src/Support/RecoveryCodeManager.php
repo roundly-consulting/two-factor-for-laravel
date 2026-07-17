@@ -6,6 +6,7 @@ namespace RoundlyConsulting\TwoFactor\Support;
 
 use Illuminate\Support\Facades\Hash;
 use RoundlyConsulting\Crypto\Hash\ConstantTime;
+use RoundlyConsulting\Crypto\Random\Token;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use SensitiveParameter;
 
@@ -84,15 +85,12 @@ final readonly class RecoveryCodeManager
         return ConstantTime::equals($storedCode, $candidate);
     }
 
+    /**
+     * The uniform CSPRNG draw lives in crypto-for-laravel; this only owns the alphabet
+     * (O excluded so codes stay unambiguous on paper) and the segment length.
+     */
     private function segment(): string
     {
-        $max = strlen(self::ALPHABET) - 1;
-        $segment = '';
-
-        for ($i = 0; $i < self::SEGMENT; $i++) {
-            $segment .= self::ALPHABET[random_int(0, $max)];
-        }
-
-        return $segment;
+        return Token::fromAlphabet(self::ALPHABET, self::SEGMENT);
     }
 }

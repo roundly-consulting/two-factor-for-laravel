@@ -87,8 +87,13 @@ it('re-imposes every crypto primitive ban on the one exempted class', function (
     $banned = array_diff(ArchPresets::CRYPTO_PRIMITIVES, ['random_int']);
 
     foreach ($banned as $primitive) {
-        expect($called)->not->toContain(
-            $primitive,
+        // NOT `expect($called)->not->toContain($primitive, $message)`: Pest's `toContain`
+        // is **variadic**, so a "message" passed there is silently taken as a second
+        // NEEDLE, and the negation then passes whenever the two needles are not both
+        // present — i.e. always. That call is vacuous, and it is vacuous in exactly the
+        // shape a reader trusts most (a ban with a helpful message). Asserted through
+        // `in_array` so the message stays a message.
+        expect(in_array($primitive, $called, true))->toBeFalse(
             "RecoveryCodeManager calls {$primitive}(). It is exempt from the crypto preset only for "
             .'the deferred random_int() refactor; every other primitive still belongs in crypto-for-laravel.',
         );
@@ -187,7 +192,15 @@ it('imports no crypto class tagged @internal', function (): void {
         $contents = (string) file_get_contents($file->getPathname());
 
         foreach ($internal as $class) {
-            expect($contents)->not->toContain($class, "{$file->getPathname()} imports the internal crypto class {$class}");
+            // This read `expect($contents)->not->toContain($class, "…message…")`, and that
+            // call is **vacuous**: Pest's `toContain` is variadic, so the message was taken
+            // as a SECOND NEEDLE and `not->toContain(a, b)` passes whenever a and b are not
+            // both present — which, for a message that never appears in source, is always.
+            // The test could not fail. Asserted through `str_contains` so the message stays
+            // a message.
+            expect(str_contains($contents, $class))->toBeFalse(
+                "{$file->getPathname()} imports the internal crypto class {$class}",
+            );
         }
     }
 });

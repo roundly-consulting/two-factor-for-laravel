@@ -33,8 +33,15 @@ ArchPresets::finalByDefault('RoundlyConsulting\TwoFactor');
  * compares a TOTP code. The fleet removed it from the shared preset on 2026-07-17; this
  * package was one of six still banning it in a local list that never read the shared one.
  */
-ArchPresets::noLocalCryptoPrimitives('RoundlyConsulting\TwoFactor')
-    ->ignoring(RecoveryCodeManager::class);
+// The exemption goes through the preset's `$ignoring` PARAMETER, not Pest's
+// `->ignoring()`. Only the parameter is checked for staleness: `::class` on a
+// non-existent class is not a PHP error (it resolves to a string at compile time), so an
+// exemption that has outlived the code it excused silences nothing and says nothing —
+// leaving the ban applying where you believe it does not. The README's own example uses
+// the unchecked form for this preset; the parameter is strictly better and costs nothing.
+ArchPresets::noLocalCryptoPrimitives('RoundlyConsulting\TwoFactor', [
+    RecoveryCodeManager::class,
+]);
 
 /**
  * The exemption above is NOT a clean bill of health — it is a deferral, and this test is

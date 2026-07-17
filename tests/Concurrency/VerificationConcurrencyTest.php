@@ -12,8 +12,6 @@ use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
-use RoundlyConsulting\TwoFactor\Tests\Fixtures\LockRecordingBuilder;
-use RoundlyConsulting\TwoFactor\Tests\Fixtures\LockRecordingUser;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
 /**
@@ -26,31 +24,6 @@ use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
  * These pins deliberately do not depend on the emitted SQL: SQLite compiles
  * `lockForUpdate()` to an empty string, so the lock is invisible on the wire.
  */
-
-/**
- * @return array{0: LockRecordingUser, 1: TwoFactorSetup}
- */
-function racingLockRecordingUser(): array
-{
-    /** @var LockRecordingUser $user */
-    $user = LockRecordingUser::query()->create([
-        'name' => 'Race',
-        'email' => 'race@example.com',
-        'password' => 'secret',
-    ]);
-
-    $setup = app(StartEnrolment::class)->execute($user);
-
-    $user->setAttribute((string) config('two-factor.columns.confirmed_at'), now());
-    $user->save();
-
-    /** @var LockRecordingUser $fresh */
-    $fresh = $user->fresh();
-
-    LockRecordingBuilder::reset();
-
-    return [$fresh, $setup];
-}
 
 /**
  * @return array{0: TwoFactorUser, 1: TwoFactorSetup}
@@ -69,18 +42,32 @@ function racingUser(): array
     return [$fresh, $setup];
 }
 
-it('locks the user row inside a transaction before it reads the recovery codes', function (): void {
-    [$user, $setup] = racingLockRecordingUser();
+/**
+ * The lock is taken even for a candidate that matches nothing: the guard runs *inside*
+ * the critical section, never on a stale pre-lock read.
+ *
+ * The lock's shape and depth are pinned in RecoveryCodeLockShapeTest, which uses the
+ * testing package's recording grammar (variant B) — it observes the emitted SQL rather
+ * than the builder call, so it can also see whether the statement is one a real engine
+ * accepts. That is the distinction the deleted local fixture could not make, and it is
+ * how credits shipped a `FOR UPDATE` on an aggregate under a green lock-recording suite.
+ */
+it('takes the lock even when the candidate code matches nothing', function (): void {
+    [$user, $setup] = racingUser();
 
-    // A candidate that matches nothing still takes the lock: the guard runs
-    // *inside* the critical section, never on a stale pre-lock read.
+    $depths = [];
+    DB::listen(function ($query) use (&$depths): void {
+        if (str_contains(strtolower($query->sql), 'for update') || $query->connection->transactionLevel() > 0) {
+            $depths[] = $query->connection->transactionLevel();
+        }
+    });
+
     expect(TwoFactor::verifyFor($user, 'AAAAA-BBBBB'))->toBeFalse()
-        ->and(LockRecordingBuilder::$locks)->toBe([1]);
+        // The consume transaction opened, so the miss was decided under the lock.
+        ->and($depths)->not->toBeEmpty()
+        ->and(max($depths))->toBe(1);
 
-    LockRecordingBuilder::reset();
-
-    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeTrue()
-        ->and(LockRecordingBuilder::$locks)->toBe([1]);
+    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeTrue();
 });
 
 it('never lets two racing verifications spend the same recovery code twice', function (): void {

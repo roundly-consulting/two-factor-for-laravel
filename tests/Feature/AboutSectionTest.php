@@ -7,14 +7,23 @@ use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
 /**
- * `php artisan about` is a diagnostic, not a disclosure. For a 2FA package that
- * means the section reports parameters, switches and presence — never a secret,
- * a recovery code, the issuer, or the cache store's name.
+ * `php artisan about` is a diagnostic, not a disclosure. For a 2FA package that means the
+ * section reports parameters, switches and presence — never a secret, a recovery code, the
+ * issuer, or the cache store's name.
+ *
+ * The leak checks below go through `toLeakNoSecrets` (A). Purchases #13 is the bug that
+ * expectation exists for: the fleet's most credential-heavy `about` section was guarded by
+ * negative assertions against `app(Kernel::class)->output()`, which returns `''` — every
+ * "does not leak" check was vacuous. This package's own tests were already on the right
+ * reader (`Artisan::output()`) and already guarded the guard, so adopting the expectation
+ * is not a bug fix here; it is the same proof with the ordering enforced by the assertion
+ * rather than by this file remembering to do it: (1) output non-empty, (2) every
+ * `mustRender` string present, (3) only then no secret renders.
  */
 function aboutOutput(): string
 {
-    // Artisan::output() is the only reader that returns the rendered text; the
-    // console kernel's own output() answers '' here.
+    // Artisan::output() is the only reader that returns the rendered text; the console
+    // kernel's own output() answers '' here — the #13 trap.
     Artisan::call('about', ['--only' => 'two-factor']);
 
     return Artisan::output();
@@ -31,23 +40,66 @@ it('contributes a two-factor section to about', function (): void {
         ->and($output)->toContain('5 attempts / 60s lockout');
 });
 
-it('renders the configured switches rather than their internals', function (): void {
+/**
+ * The whole secret surface of a 2FA package in one capture: the live TOTP secret, a live
+ * recovery code, the issuer, the cache store's name and a remapped column name. None of
+ * them may render; the parameters around them must.
+ */
+it('renders the security posture without leaking a secret, an issuer or a store', function (): void {
+    // The enrolment runs FIRST, on the shipped column names the fixture table was
+    // migrated with. Remapping `two-factor.columns.*` here would be a body-time config
+    // change against an already-migrated table — the write would go to a column that does
+    // not exist. The remap is covered separately below, by a case that renders without
+    // writing.
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+
     config([
         'two-factor.replay_guard' => 'cache',
         'two-factor.cache.store' => 'redis-2fa',
-        'two-factor.attempts' => null,
         'two-factor.issuer' => 'Acme Bank',
     ]);
 
-    $output = aboutOutput();
+    expect('two-factor')->toLeakNoSecrets(
+        secrets: [
+            // The live enrolment: the TOTP seed and a single-use recovery code are the
+            // two things that would hand an attacker the account outright.
+            $setup->secret,
+            $setup->recoveryCodes[0],
+            // The host's deployment detail: which cache store backs the replay guard, and
+            // who the issuer is, are the host's business rather than the console's.
+            'redis-2fa',
+            'Acme Bank',
+        ],
+        mustRender: [
+            // The positive half — the parameters are public by construction (they travel
+            // in the otpauth:// URI) and are the reason the section exists.
+            'Algorithm',
+            'sha1',
+            '6 digits every 30s',
+            '±1 timesteps',
+            '32 base32 chars',
+            // Presence, not value: each of these is the safe report standing in for one
+            // of the secrets above, so it also proves the line rendered at all rather
+            // than being silently absent.
+            'SET',
+            'cache (custom store)',
+        ],
+    );
+});
 
-    expect($output)->toContain('cache (custom store)')
-        ->and($output)->toContain('OFF (host throttling)')
-        ->and($output)->toContain('SET')
-        // The store name and the issuer are the host's business, not the
-        // console's.
-        ->and($output)->not->toContain('redis-2fa')
-        ->and($output)->not->toContain('Acme Bank');
+/**
+ * A remapped column name describes the host's schema; the section reports *that* it was
+ * remapped, never to what. Rendering only — no row is written, so the remap can safely be
+ * set after the fixture table was migrated.
+ */
+it('reports a remapped column map without naming the columns', function (): void {
+    config(['two-factor.columns.secret' => 'mfa_secret']);
+
+    expect('two-factor')->toLeakNoSecrets(
+        secrets: ['mfa_secret'],
+        mustRender: ['Columns', 'remapped'],
+    );
 });
 
 it('reports every replay-guard mode', function (?string $mode, ?string $store, string $expected): void {
@@ -61,25 +113,8 @@ it('reports every replay-guard mode', function (?string $mode, ?string $store, s
     'disabled' => [null, null, 'OFF'],
 ]);
 
-it('never renders a user secret or recovery code', function (): void {
-    $user = TwoFactorUser::factory()->create();
-    $setup = app(StartEnrolment::class)->execute($user);
+it('reports a disabled attempt limiter as the host taking over', function (): void {
+    config(['two-factor.attempts' => null]);
 
-    $output = aboutOutput();
-
-    expect($output)->not->toContain($setup->secret)
-        ->and($output)->not->toContain($setup->recoveryCodes[0]);
-
-    // Guard the guard: the section really did render (an empty output would make
-    // the two assertions above pass vacuously).
-    expect($output)->toContain('Two-factor');
-});
-
-it('reports a remapped column map without naming the columns', function (): void {
-    config(['two-factor.columns.secret' => 'mfa_secret']);
-
-    $output = aboutOutput();
-
-    expect($output)->toContain('remapped')
-        ->and($output)->not->toContain('mfa_secret');
+    expect(aboutOutput())->toContain('OFF (host throttling)');
 });

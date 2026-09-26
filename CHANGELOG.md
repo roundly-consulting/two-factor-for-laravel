@@ -29,3 +29,14 @@ All notable changes to `two-factor-for-laravel` will be documented in this file.
   overridable `twoFactorLabel()` provisioning-label hook.
 - Security: the enrolment-confirmation code's timestep is now recorded in the replay guard, so
   it can no longer be replayed once at the first login.
+- `TwoFactor::attempt()` / `attemptTwoFactorCode()` return a `VerificationResult` DTO
+  (`verified`, `method`, `remainingRecoveryCodes`, `replayed`); `verifyFor()` is now
+  `attempt()->verified`. New `TwoFactorMethod` enum (`totp`, `recovery_code`).
+- `TwoFactorVerified` carries `TwoFactorMethod $method` (replaces `bool $viaRecoveryCode`);
+  `RecoveryCodeConsumed` carries `int $remaining`.
+- Per-call provisioning issuer: `StartEnrolment::execute($user, $label, $issuer)` and
+  `startTwoFactorEnrolment($label, $issuer)`; `TwoFactorSetup` gains `issuer`.
+- `two-factor.table` (`TWO_FACTOR_TABLE`, default `users`) steers the published migration;
+  further account tables use the `twoFactorColumns()` macro.
+- `FakeTwoFactor` drives `attempt()`: `acceptRecoveryCode()`, `replay()`,
+  `withRemainingRecoveryCodes()`, `assertVerifiedVia()`.

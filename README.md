@@ -61,7 +61,8 @@ php artisan migrate
 Re-publishing overwrites the file it published to last time, so you never end up with two
 copies of the same migration.
 
-The migration adds four nullable columns to your `users` table. If you write your own
+The migration adds four nullable columns to your `users` table — or to the table named by
+`two-factor.table` (`TWO_FACTOR_TABLE`), read when the migration runs. If you write your own
 migration instead, use the Blueprint macro:
 
 ```php
@@ -69,6 +70,22 @@ Schema::table('users', function (Blueprint $table): void {
     $table->twoFactorColumns(); // secret, recovery_codes, confirmed_at, last_used_timestep
 });
 ```
+
+### Other account tables
+
+Two-factor works on any Eloquent model that uses the trait — `clients`, `admins`, one per
+guard. The published migration covers one table; give every further account table the same
+columns in your own migration with the macro:
+
+```php
+Schema::table('clients', function (Blueprint $table): void {
+    $table->twoFactorColumns();
+});
+```
+
+Column names come from the shared `two-factor.columns` map, and the built-in limiter keys on
+the model class as well as the id, so a user and a client with the same id never share a
+lockout.
 
 Optionally publish the config file:
 
@@ -115,7 +132,11 @@ return [
         'ttl' => 60 * 60 * 24,
     ],
 
-    // Column names on the host users table — remap for non-standard schemas.
+    // The table the published migration adds the columns to. Other account
+    // tables get them via `$table->twoFactorColumns()` in your own migration.
+    'table' => env('TWO_FACTOR_TABLE', 'users'),
+
+    // Column names on the host account table(s) — remap for non-standard schemas.
     'columns' => [
         'secret' => 'two_factor_secret',
         'recovery_codes' => 'two_factor_recovery_codes',
@@ -141,14 +162,15 @@ return [
 | `replay_guard` | string\|null | `column` | Last-used-timestep store: `column`, `cache`, or `none`/`null` |
 | `cache.store` | string\|null | `env('TWO_FACTOR_CACHE_STORE')` | Cache store for the `cache` guard |
 | `cache.ttl` | int | `86400` | Seconds to retain the last timestep in `cache` mode |
-| `columns.*` | string | — | Column names on the `users` table |
+| `table` | string | `env('TWO_FACTOR_TABLE', 'users')` | Table the published migration alters; blank falls back to `users` |
+| `columns.*` | string | — | Column names on every two-factor account table |
 
 The `replay_guard` and `recovery_codes.storage` values are backed by the `ReplayGuardMode` and
 `RecoveryCodeStorage` enums, and `algorithm` by crypto's `Otp\OtpAlgorithm` (`sha1` | `sha256` |
 `sha512`) — an unknown value throws `InvalidTwoFactorConfigException` at resolution, never a
 silent hash downgrade.
 
-**Env vars:** `TWO_FACTOR_ISSUER`, `TWO_FACTOR_CACHE_STORE`.
+**Env vars:** `TWO_FACTOR_ISSUER`, `TWO_FACTOR_CACHE_STORE`, `TWO_FACTOR_TABLE`.
 
 ## Host model setup
 
@@ -185,6 +207,14 @@ $setup = app(StartEnrolment::class)->execute($user);
 $setup->secret;          // base32 secret (store is handled for you)
 $setup->provisioningUri; // otpauth://totp/Acme:user@acme.io?secret=...&issuer=Acme&...
 $setup->recoveryCodes;   // list<string> — show these once, they are the only plaintext copy
+$setup->issuer;          // the issuer the URI carries — show it next to the QR
+```
+
+The issuer defaults to `two-factor.issuer`, then `app.name`. Brand it per call — one name per
+guard or tenant — with the `issuer` argument:
+
+```php
+$setup = app(StartEnrolment::class)->execute($client, issuer: 'Acme Partner Portal');
 ```
 
 Render the QR **client-side** from `$setup->provisioningUri` (e.g. `qrcode.js`,
@@ -217,7 +247,28 @@ try {
 }
 ```
 
-`verifyFor()` checks the TOTP code with replay protection first, then falls back to a
+Need to know **how** the challenge was passed? `attempt()` runs the exact same checks and
+returns a `VerificationResult` instead of a bool:
+
+```php
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
+
+$result = TwoFactor::attempt($user, $request->string('code'));
+
+$result->verified;               // bool — same answer verifyFor() gives
+$result->method;                 // TwoFactorMethod::Totp | ::RecoveryCode | null on failure
+$result->remainingRecoveryCodes; // int, after this attempt — "1 recovery code left"
+$result->replayed;               // true when a valid code's timestep was already used
+
+if ($result->method === TwoFactorMethod::RecoveryCode) {
+    // e.g. notify the user, add 'recovery_code' to an amr claim
+}
+```
+
+The remaining count after a recovery code is read from the row locked for the spend, so it is
+correct even when two requests race.
+
+`verifyFor()` (and `attempt()`) checks the TOTP code with replay protection first, then falls back to a
 single-use recovery code (consuming it). A code whose timestep was already used is rejected,
 and so is any code for a user whose enrolment is still **pending** (`confirmed_at` unset) —
 only a confirmed second factor can satisfy a challenge.
@@ -248,13 +299,15 @@ model is the subject of the action — no container-resolved action needed:
 $setup  = $user->startTwoFactorEnrolment();          // → TwoFactorSetup
 $user->confirmTwoFactor($request->string('code'));   // finish enrolment
 $ok     = $user->verifyTwoFactorCode($code);         // login challenge (== TwoFactor::verifyFor)
+$result = $user->attemptTwoFactorCode($code);        // → VerificationResult (== TwoFactor::attempt)
 $user->disableTwoFactor();
 $codes  = $user->regenerateTwoFactorRecoveryCodes(); // list<string>
 
 $user->twoFactorRecoveryCodesRemaining();            // int — drive a "regenerate?" prompt
 ```
 
-Pass a label to `startTwoFactorEnrolment('billing@acme.io')`, or override
+Pass a label and/or an issuer —
+`startTwoFactorEnrolment('billing@acme.io', issuer: 'Acme Billing')` — or override
 `twoFactorLabel()` on the model to key the provisioning URI on a username/phone instead of
 the default (email → primary key).
 
@@ -264,6 +317,7 @@ the default (email → primary key).
 $secret = TwoFactor::generateSecret();                          // base32
 $code   = TwoFactor::currentCode($secret);                      // current 6-digit code
 $step   = TwoFactor::verify($secret, $code);                    // int timestep | false
+$result = TwoFactor::attempt($user, $code);                     // VerificationResult
 $uri    = TwoFactor::provisioningUri($secret, 'user@acme.io');  // otpauth:// URI
 $codes  = TwoFactor::generateRecoveryCodes();                   // list<string>
 ```
@@ -313,7 +367,7 @@ table.
 
 ## Events
 
-All events carry the user model only (no secrets/codes):
+All events carry the user model (never a secret or a code); a few add a non-sensitive detail:
 
 | Event | Fired when |
 |---|---|
@@ -321,8 +375,8 @@ All events carry the user model only (no secrets/codes):
 | `TwoFactorConfirmed` | `ConfirmEnrolment` enables 2FA |
 | `TwoFactorDisabled` | `DisableTwoFactor` clears 2FA state |
 | `RecoveryCodesRegenerated` | `RegenerateRecoveryCodes` replaces the code set |
-| `RecoveryCodeConsumed` | `verifyFor` burns a recovery code |
-| `TwoFactorVerified` | a user passes a challenge (`viaRecoveryCode: bool` on the event) |
+| `RecoveryCodeConsumed` | `attempt`/`verifyFor` burns a recovery code (carries `remaining`, the count left) |
+| `TwoFactorVerified` | a user passes a challenge (carries `method`: `TwoFactorMethod::Totp` or `::RecoveryCode`) |
 | `TwoFactorVerificationFailed` | an enrolled user fails a challenge (not on replay/no-secret) |
 | `TwoFactorReplayDetected` | a code with an already-used timestep is rejected |
 | `TwoFactorRateLimited` | the built-in limiter locks a user out (carries `secondsUntilAvailable`) |
@@ -374,11 +428,21 @@ $this->post('/login/2fa', ['code' => '000000'])->assertStatus(422);
 
 // Accept only a specific code:
 TwoFactor::fake()->acceptCode('424242');
+
+// Drive attempt(): pass via a recovery code, report 2 left, assert the method:
+$fake = TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(2);
+$fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
+
+// Fail as a replay (VerificationResult::$replayed === true):
+TwoFactor::fake()->replay();
 ```
 
-Programmable behaviour: `accept()`, `reject()`, `acceptCode($code)`, `withSecret($secret)`,
-`withRecoveryCodes(...$codes)`. Assertions (each throws a package exception, so they work
-under any runner): `assertVerified()`, `assertVerifiedFor($user)`,
+Programmable behaviour: `accept()` (passes via TOTP), `acceptRecoveryCode()`, `reject()`,
+`replay()`, `acceptCode($code)`, `withRemainingRecoveryCodes($n)` (unset, the fake reports the
+user's stored count, one lower when a recovery code passes), `withSecret($secret)`,
+`withRecoveryCodes(...$codes)`. `attempt()` and `verifyFor()` are recorded alike. Assertions
+(each throws a package exception, so they work under any runner): `assertVerified()`,
+`assertVerifiedFor($user)`, `assertVerifiedVia($method)`,
 `assertVerificationFailed()`, `assertNothingVerified()`, `assertVerifyCount($n)`,
 `assertCodeAttempted($code)`. The fake is test-only and performs no TOTP math — it is bound
 solely through `TwoFactor::fake()` and never in production.

@@ -40,3 +40,5 @@ All notable changes to `two-factor-for-laravel` will be documented in this file.
   further account tables use the `twoFactorColumns()` macro.
 - `FakeTwoFactor` drives `attempt()`: `acceptRecoveryCode()`, `replay()`,
   `withRemainingRecoveryCodes()`, `assertVerifiedVia()`.
+- Docs: server-side QR rendering of the enrolment URI via the optional qr-for-laravel
+  (`suggest` only — two-factor stays QR-free).

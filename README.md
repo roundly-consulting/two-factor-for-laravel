@@ -7,8 +7,10 @@
 # Two-Factor Authentication for Laravel
 
 Native RFC 6238 TOTP two-factor authentication for Laravel — encrypted secrets, single-use
-recovery codes and replay protection, with **zero third-party crypto dependencies**. The QR
-code is rendered client-side from the `otpauth://` URI, so no image library ships here.
+recovery codes and replay protection, with **zero third-party crypto dependencies**. QR
+rendering is up to you: draw it client-side from the `otpauth://` URI, or server-side as an SVG
+with our native [qr-for-laravel](https://github.com/roundly-consulting/qr-for-laravel). No image
+library ships in this package.
 
 - RFC 4226 / RFC 6238 TOTP and the RFC 4648 base32 codec, from our own
   [crypto-for-laravel](https://github.com/roundly-consulting/crypto-for-laravel).
@@ -43,6 +45,11 @@ code is rendered client-side from the `otpauth://` URI, so no image library ship
   config merge/publish wiring, the publish-only migration handling, and the
   `php artisan about --only=two-factor` section (which reports the TOTP parameters, the replay
   guard and the attempt limit — never a secret, a recovery code, the issuer or a store name).
+
+- **[qr-for-laravel](https://github.com/roundly-consulting/qr-for-laravel)** — **optional
+  (`suggest`)**, never installed by this package. Add it to your app to render the enrolment
+  `otpauth://` URI as an SVG QR code server-side — see
+  [Rendering the QR code](#rendering-the-qr-code). Two-factor itself stays QR-free.
 
 ## Installation
 
@@ -217,8 +224,40 @@ guard or tenant — with the `issuer` argument:
 $setup = app(StartEnrolment::class)->execute($client, issuer: 'Acme Partner Portal');
 ```
 
-Render the QR **client-side** from `$setup->provisioningUri` (e.g. `qrcode.js`,
-`react-qr-code`). This package never renders a QR image.
+### Rendering the QR code
+
+This package never renders a QR image — it hands you `$setup->provisioningUri`. Draw it
+wherever suits your stack.
+
+**Server-side (SVG)** — install our native
+[qr-for-laravel](https://github.com/roundly-consulting/qr-for-laravel)
+(`composer require roundly-consulting/qr-for-laravel`) and render the URI in one call:
+
+```php
+use RoundlyConsulting\Qr\Enums\ErrorCorrection;
+use RoundlyConsulting\Qr\Facades\Qr;
+
+$setup = $user->startTwoFactorEnrolment();
+
+$svg = Qr::otpauth($setup->provisioningUri)
+    ->size(240)
+    ->errorCorrection(ErrorCorrection::Medium)
+    ->title(__('Scan with your authenticator app'))
+    ->svg();
+
+// Blade:       {{ $svg }}  — renders the SVG markup; show {{ $setup->issuer }} next to it
+// JSON API:    ['qr' => $svg->toDataUri(), 'issuer' => $setup->issuer]
+// Controller:  return $svg;  — an image/svg+xml response
+// Raw markup:  $svg->toString()
+```
+
+`Qr::otpauth()` encodes the URI **unchanged** and treats it as a secret: never memoised or
+cached, served with `Cache-Control: no-store` and no ETag. The code carries the TOTP secret —
+show it on the enrolment screen only; never persist, log or e-mail the SVG.
+
+**Client-side** — pass `$setup->provisioningUri` to your front end and draw it there (e.g.
+`qrcode.js`, `react-qr-code`). Send it over the same authenticated response as the rest of the
+enrolment screen, and don't keep it once enrolment is confirmed.
 
 ### Confirm
 

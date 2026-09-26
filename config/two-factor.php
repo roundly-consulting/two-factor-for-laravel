@@ -38,7 +38,11 @@ return [
         'ttl' => 60 * 60 * 24,                    // seconds to retain last timestep in cache mode
     ],
 
-    // Column names on the host users table — remap for non-standard schemas.
+    // The table the published migration adds the columns to. Other account
+    // tables get them via `$table->twoFactorColumns()` in your own migration.
+    'table' => env('TWO_FACTOR_TABLE', 'users'),
+
+    // Column names on the host account table(s) — remap for non-standard schemas.
     'columns' => [
         'secret' => 'two_factor_secret',
         'recovery_codes' => 'two_factor_recovery_codes',

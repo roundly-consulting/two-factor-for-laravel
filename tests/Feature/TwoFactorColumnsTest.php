@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Schema;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\CacheReplayGuard;
+use RoundlyConsulting\TwoFactor\Support\TwoFactorColumns;
 
 it('adds and drops all four two-factor columns via the blueprint macros', function (): void {
     Schema::create('accounts', function ($table): void {
@@ -26,6 +27,27 @@ it('adds and drops all four two-factor columns via the blueprint macros', functi
     expect(Schema::hasColumn('accounts', 'two_factor_secret'))->toBeFalse()
         ->and(Schema::hasColumn('accounts', 'two_factor_last_used_timestep'))->toBeFalse();
 });
+
+it('targets the users table by default', function (): void {
+    expect(config('two-factor.table'))->toBe('users')
+        ->and(TwoFactorColumns::table())->toBe('users');
+});
+
+it('targets the configured account table', function (): void {
+    config(['two-factor.table' => 'clients']);
+
+    expect(TwoFactorColumns::table())->toBe('clients');
+});
+
+it('falls back to users for a blank or non-string table config', function (mixed $value): void {
+    config(['two-factor.table' => $value]);
+
+    expect(TwoFactorColumns::table())->toBe('users');
+})->with([
+    'null' => [null],
+    'empty' => [''],
+    'array' => [['clients']],
+]);
 
 it('resolves a cache guard bound to the configured store', function (): void {
     config([

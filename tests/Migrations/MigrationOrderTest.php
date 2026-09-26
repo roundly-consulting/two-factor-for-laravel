@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Str;
+use RoundlyConsulting\TwoFactor\Support\TwoFactorColumns;
 
 /**
  * Publish order == directory sort order, so a migration that touches a table an
@@ -44,6 +45,12 @@ function migrationSources(): array
 function dependsOnTables(string $body): array
 {
     preg_match_all("/Schema::table\(\s*'([^']+)'/", $body, $alters);
+
+    // The shipped stub names its table through the config-driven helper rather
+    // than a literal, so resolve that call to the table it alters today.
+    if (preg_match('/Schema::table\(\s*TwoFactorColumns::table\(\)/', $body) === 1) {
+        $alters[1][] = TwoFactorColumns::table();
+    }
     preg_match_all("/->constrained\(\s*'([^']+)'/", $body, $named);
     preg_match_all("/->references\(\s*'[^']+'\s*\)\s*->on\(\s*'([^']+)'/", $body, $referenced);
     preg_match_all("/foreignId(?:For)?\(\s*'([^']+)'\s*\)[^;]*?->constrained\(\s*\)/", $body, $bare);

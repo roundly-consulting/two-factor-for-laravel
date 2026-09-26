@@ -40,32 +40,35 @@ it('publishes its migration timestamp-injected into the host', function (): void
  * runs on whatever driver the leg configured, so the pgsql leg puts this stub in front of
  * a real engine for the first time.
  */
-it('runs the published migration against a clean host users table', function () use ($stub): void {
+it('runs the published migration against the configured account table', function () use ($stub): void {
     // A clean host table the package's columns have NOT already been added to (the suite's
-    // own `users` fixture already carries them).
-    Schema::create('publish_probe_users', function (Blueprint $table): void {
+    // own `users` fixture already carries them) — a second account table, the case
+    // `two-factor.table` exists for.
+    Schema::create('clients', function (Blueprint $table): void {
         $table->id();
         $table->string('email');
     });
 
-    // The stub names `users`; point it at the probe table, which keeps the shipped file
-    // byte-identical to what a host receives while letting it run beside the fixture.
+    config(['two-factor.table' => 'clients']);
+
+    // Copied byte-for-byte: the config key alone must steer the shipped file, exactly as it
+    // does in a host that published it.
     $directory = sys_get_temp_dir().'/two-factor-publish-'.Str::random(8);
     mkdir($directory);
     $file = $directory.'/2026_01_01_000000_add_two_factor_columns_to_users_table.php';
-    file_put_contents($file, str_replace("'users'", "'publish_probe_users'", (string) file_get_contents($stub)));
+    copy($stub, $file);
 
     // Applied directly rather than through `artisan migrate`: the migrator wants its own
     // repository table and a batch number, none of which this is testing. What is being
     // tested is that the shipped `up()` runs — on whatever driver the leg configured, so
-    // the pgsql leg puts this stub in front of a real engine for the first time.
+    // the pgsql leg puts this stub in front of a real engine.
     $migration = require $file;
 
     expect($migration)->toBeInstanceOf(Migration::class);
 
     $migration->up();
 
-    expect(Schema::hasColumns('publish_probe_users', [
+    expect(Schema::hasColumns('clients', [
         'two_factor_secret',
         'two_factor_recovery_codes',
         'two_factor_confirmed_at',
@@ -74,10 +77,18 @@ it('runs the published migration against a clean host users table', function () 
 
     // The types are the half only a real engine checks: sqlite reports `unsignedBigInteger`
     // and `integer` alike, so a width regression here is invisible until the pgsql leg.
-    expect(Schema::getColumnType('publish_probe_users', 'two_factor_last_used_timestep'))
+    expect(Schema::getColumnType('clients', 'two_factor_last_used_timestep'))
         ->toBe(DriverMatrix::driver() === 'pgsql' ? 'int8' : 'integer');
 
-    Schema::drop('publish_probe_users');
+    Schema::drop('clients');
     array_map(unlink(...), (array) glob($directory.'/*'));
     rmdir($directory);
+});
+
+it('ships a stub that names its table only through the config-driven helper', function () use ($stub): void {
+    $body = (string) file_get_contents($stub);
+
+    // A literal table name here would silently ignore `two-factor.table`.
+    expect(preg_match("/Schema::table\\(\\s*'/", $body))->toBe(0)
+        ->and(substr_count($body, 'Schema::table(TwoFactorColumns::table()'))->toBe(1);
 });

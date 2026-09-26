@@ -74,6 +74,9 @@ ArchPresets::noDebuggingLeftovers();
  * permitted vendor roots. Our own crypto-for-laravel is allowed — it owns the
  * OTP/codec/CSPRNG primitives — but any accidental `use` of a third-party OTP library,
  * QR encoder or cron parser fails the suite without naming competitors.
+ *
+ * `RoundlyConsulting\Qr` is deliberately absent — two-factor emits the URI, rendering is
+ * the host's/auth's (cross-qr-for-laravel.md, Option B).
  */
 arch('src only uses allowed vendor roots')
     ->expect('RoundlyConsulting\TwoFactor')
@@ -97,7 +100,7 @@ arch('src only uses allowed vendor roots')
     ]);
 
 arch('no forbidden crypto or qr vendors are imported')
-    ->expect(['PragmaRX', 'BaconQrCode', 'Cron'])
+    ->expect(['PragmaRX', 'BaconQrCode', 'Endroid', 'chillerlan', 'SimpleSoftwareIO', 'Cron'])
     ->not->toBeUsed();
 
 /**

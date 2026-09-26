@@ -1,8 +1,10 @@
+<!-- roundly-hero:start -->
 <p align="center">
-  <a href="https://roundly-consulting.com/open-source">
-    <img src="art/hero.png" alt="Two Factor For Laravel — Roundly open source" width="100%">
+  <a href="https://roundly-consulting.com/open-source/docs/two-factor-for-laravel?utm_source=github&utm_medium=readme&utm_campaign=open-source&utm_content=two-factor-for-laravel">
+    <img src="art/hero.png" alt="Two-Factor Authentication for Laravel — Roundly open source" width="100%">
   </a>
 </p>
+<!-- roundly-hero:end -->
 
 # Two-Factor Authentication for Laravel
 

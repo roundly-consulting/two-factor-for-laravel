@@ -268,7 +268,9 @@ use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
 
 app(ConfirmEnrolment::class)->execute($user, $request->string('code'));
 // throws InvalidTwoFactorCodeException on a wrong code,
-// TwoFactorNotPendingException if there is no pending enrolment.
+// TwoFactorNotPendingException if there is no pending enrolment — including when 2FA is
+// already enabled: a confirm is never a silent no-op, so a clean return always means this
+// code just switched 2FA on.
 ```
 
 ### Verify during login

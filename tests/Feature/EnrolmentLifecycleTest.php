@@ -87,19 +87,45 @@ it('throws on an invalid confirmation code', function (): void {
     app(ConfirmEnrolment::class)->execute($user->fresh(), '000000');
 })->throws(InvalidTwoFactorCodeException::class);
 
-it('is idempotent when confirming an already-enabled user', function (): void {
+/**
+ * Confirming is only ever a transition from pending to enabled. A confirm on an
+ * already-enabled user used to return silently WITHOUT checking the code, so a caller
+ * treating a clean return as proof of possession (a forced-enrolment login step, an
+ * account "confirm" endpoint) accepted any code at all. Nothing is pending, so it is
+ * refused — whatever the code — and nothing is written or dispatched.
+ */
+it('refuses to confirm an already-enabled user, whatever the code', function (string $which): void {
     $user = TwoFactorUser::factory()->create();
     $setup = app(StartEnrolment::class)->execute($user);
+
+    Carbon::setTestNow(Carbon::now()->subSeconds(90));
     app(ConfirmEnrolment::class)->execute($user, TwoFactor::currentCode($setup->secret));
+    Carbon::setTestNow();
 
-    $confirmedAt = $user->fresh()->two_factor_confirmed_at;
+    $before = $user->fresh();
+    Event::fake();
 
-    // Re-confirming with a wrong code is a no-op, not an error.
-    app(ConfirmEnrolment::class)->execute($user->fresh(), '000000');
+    $code = $which === 'valid' ? TwoFactor::currentCode($setup->secret) : '000000';
 
-    expect($user->fresh()->hasTwoFactorEnabled())->toBeTrue()
-        ->and($user->fresh()->two_factor_confirmed_at->equalTo($confirmedAt))->toBeTrue();
-});
+    expect(fn () => app(ConfirmEnrolment::class)->execute($user->fresh(), $code))
+        ->toThrow(TwoFactorNotPendingException::class, 'already enabled');
+
+    $after = $user->fresh();
+
+    expect($after->hasTwoFactorEnabled())->toBeTrue()
+        ->and($after->two_factor_confirmed_at->equalTo($before->two_factor_confirmed_at))->toBeTrue()
+        ->and($after->two_factor_last_used_timestep)->toBe($before->two_factor_last_used_timestep);
+
+    Event::assertNotDispatched(TwoFactorConfirmed::class);
+})->with(['wrong code' => ['wrong'], 'valid current code' => ['valid']]);
+
+it('refuses a re-confirm through the trait verb too', function (): void {
+    $user = TwoFactorUser::factory()->create();
+    $setup = $user->startTwoFactorEnrolment();
+    $user->confirmTwoFactor(TwoFactor::currentCode($setup->secret));
+
+    $user->fresh()->confirmTwoFactor('000000');
+})->throws(TwoFactorNotPendingException::class);
 
 it('regenerates recovery codes and dispatches an event', function (): void {
     Event::fake();

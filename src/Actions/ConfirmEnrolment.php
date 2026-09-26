@@ -17,7 +17,9 @@ use SensitiveParameter;
 
 /**
  * Confirms a pending enrolment by verifying the first code, stamping
- * confirmed_at. Idempotent once already enabled.
+ * confirmed_at. Only a pending enrolment can be confirmed: an already-enabled
+ * user is refused with TwoFactorNotPendingException before the code is looked
+ * at, so a clean return always means "this code just enabled two-factor".
  */
 final class ConfirmEnrolment
 {
@@ -28,13 +30,16 @@ final class ConfirmEnrolment
     ) {}
 
     /**
-     * @throws TwoFactorNotPendingException
+     * @throws TwoFactorNotPendingException when nothing is pending — including when
+     *                                      two-factor is already enabled
      * @throws InvalidTwoFactorCodeException
      */
     public function execute(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): void
     {
+        // Never a silent success: returning here without checking the code let any
+        // caller that treats a clean return as proof of possession accept any code.
         if ($user->hasTwoFactorEnabled()) {
-            return;
+            throw TwoFactorNotPendingException::alreadyEnabled();
         }
 
         if (! $user->hasPendingTwoFactor()) {

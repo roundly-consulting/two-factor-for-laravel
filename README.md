@@ -266,7 +266,7 @@ The user scans the code and submits the first 6-digit code to finish enrolment:
 ```php
 use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
 
-app(ConfirmEnrolment::class)->execute($user, $request->string('code'));
+app(ConfirmEnrolment::class)->execute($user, $request->string('code')->toString());
 // throws InvalidTwoFactorCodeException on a wrong code,
 // TwoFactorNotPendingException if there is no pending enrolment — including when 2FA is
 // already enabled: a confirm is never a silent no-op, so a clean return always means this
@@ -280,7 +280,7 @@ use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 
 try {
-    if (TwoFactor::verifyFor($user, $request->string('code'))) {
+    if (TwoFactor::verifyFor($user, $request->string('code')->toString())) {
         // accepted — TOTP (replay-safe) or a single-use recovery code
     }
 } catch (TwoFactorRateLimitedException $e) {
@@ -294,7 +294,7 @@ returns a `VerificationResult` instead of a bool:
 ```php
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 
-$result = TwoFactor::attempt($user, $request->string('code'));
+$result = TwoFactor::attempt($user, $request->string('code')->toString());
 
 $result->verified;               // bool — same answer verifyFor() gives
 $result->method;                 // TwoFactorMethod::Totp | ::RecoveryCode | null on failure
@@ -338,7 +338,7 @@ model is the subject of the action — no container-resolved action needed:
 
 ```php
 $setup  = $user->startTwoFactorEnrolment();          // → TwoFactorSetup
-$user->confirmTwoFactor($request->string('code'));   // finish enrolment
+$user->confirmTwoFactor($code);                      // finish enrolment
 $ok     = $user->verifyTwoFactorCode($code);         // login challenge (== TwoFactor::verifyFor)
 $result = $user->attemptTwoFactorCode($code);        // → VerificationResult (== TwoFactor::attempt)
 $user->disableTwoFactor();

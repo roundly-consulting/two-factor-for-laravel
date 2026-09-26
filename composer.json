@@ -41,6 +41,9 @@
         "pestphp/pest-plugin-arch": "^4.0",
         "roundly-consulting/testing-for-laravel": "@dev"
     },
+    "suggest": {
+        "roundly-consulting/qr-for-laravel": "Render the enrolment otpauth:// URI as an SVG QR code server-side: Qr::otpauth($setup->provisioningUri)->svg()"
+    },
     "repositories": [
         {
             "type": "path",

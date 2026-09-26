@@ -8,7 +8,8 @@ use SensitiveParameter;
 
 /**
  * The one-time enrolment payload: the base32 secret, the otpauth:// URI the
- * frontend renders as a QR, and the plaintext recovery codes to show once.
+ * frontend renders as a QR, the plaintext recovery codes to show once, and the
+ * issuer the URI carries (for display next to the QR).
  */
 final readonly class TwoFactorSetup
 {
@@ -19,5 +20,6 @@ final readonly class TwoFactorSetup
         #[SensitiveParameter] public string $secret,
         public string $provisioningUri,
         public array $recoveryCodes,
+        public string $issuer,
     ) {}
 }

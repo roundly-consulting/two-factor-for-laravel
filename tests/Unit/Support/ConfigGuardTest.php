@@ -63,3 +63,11 @@ it('rejects a non-positive attempt budget', function (array $attempts): void {
     'zero max' => [['max' => 0, 'decay' => 60]],
     'zero decay' => [['max' => 5, 'decay' => 0]],
 ])->throws(InvalidTwoFactorConfigException::class);
+
+it('resolves the default issuer from config, then the app name', function (): void {
+    config(['two-factor.issuer' => 'Acme', 'app.name' => 'App']);
+    expect(ConfigGuard::issuer())->toBe('Acme');
+
+    config(['two-factor.issuer' => null]);
+    expect(ConfigGuard::issuer())->toBe('App');
+});

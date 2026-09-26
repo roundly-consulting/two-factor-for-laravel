@@ -12,11 +12,14 @@ use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorEnrolmentStarted;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAlreadyEnabledException;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 
 /**
  * Begins (or restarts) a pending enrolment: generates a fresh secret + recovery
  * codes, persists them with confirmed_at null, and returns the one-time setup.
+ * The issuer defaults to config (then the app name); pass one per guard or
+ * tenant to brand the authenticator entry.
  */
 final class StartEnrolment
 {
@@ -28,7 +31,7 @@ final class StartEnrolment
     /**
      * @throws TwoFactorAlreadyEnabledException
      */
-    public function execute(TwoFactorAuthenticatable&Model $user, ?string $label = null): TwoFactorSetup
+    public function execute(TwoFactorAuthenticatable&Model $user, ?string $label = null, ?string $issuer = null): TwoFactorSetup
     {
         if ($user->hasTwoFactorEnabled()) {
             throw TwoFactorAlreadyEnabledException::make();
@@ -50,10 +53,15 @@ final class StartEnrolment
 
         $this->events?->dispatch(new TwoFactorEnrolmentStarted($user));
 
+        // Resolved here and passed explicitly, so the URI and the setup's issuer
+        // can never disagree — whichever service is bound.
+        $issuer ??= ConfigGuard::issuer();
+
         return new TwoFactorSetup(
             secret: $secret,
-            provisioningUri: $this->twoFactor->provisioningUri($secret, $label ?? $user->twoFactorLabel()),
+            provisioningUri: $this->twoFactor->provisioningUri($secret, $label ?? $user->twoFactorLabel(), $issuer),
             recoveryCodes: $codes,
+            issuer: $issuer,
         );
     }
 

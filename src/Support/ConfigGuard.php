@@ -118,4 +118,13 @@ final class ConfigGuard
 
         return new AttemptLimit($max, $decay);
     }
+
+    /**
+     * The default provisioning issuer: `two-factor.issuer`, else the app name.
+     * A caller-supplied issuer (per guard, per tenant) always wins over this.
+     */
+    public static function issuer(): string
+    {
+        return (string) (config('two-factor.issuer') ?? config('app.name'));
+    }
 }

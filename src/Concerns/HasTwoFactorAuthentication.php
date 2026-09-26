@@ -54,11 +54,12 @@ trait HasTwoFactorAuthentication
     }
 
     /**
-     * Begin (or restart) a pending enrolment for this user.
+     * Begin (or restart) a pending enrolment for this user. Pass an issuer to
+     * brand the authenticator entry per guard; null falls back to config.
      */
-    public function startTwoFactorEnrolment(?string $label = null): TwoFactorSetup
+    public function startTwoFactorEnrolment(?string $label = null, ?string $issuer = null): TwoFactorSetup
     {
-        return app(StartEnrolment::class)->execute($this, $label);
+        return app(StartEnrolment::class)->execute($this, $label, $issuer);
     }
 
     /**

@@ -59,6 +59,17 @@ it('attempts a code through the trait verb and reports the method', function ():
     $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
 });
 
+it('brands the enrolment with a per-call issuer through the trait verb', function (): void {
+    config(['two-factor.issuer' => 'Configured']);
+    $user = TwoFactorUser::factory()->create(['email' => 'jane@acme.io']);
+
+    $setup = $user->startTwoFactorEnrolment(issuer: 'Clients Portal');
+
+    expect($setup->issuer)->toBe('Clients Portal')
+        ->and($setup->provisioningUri)->toStartWith('otpauth://totp/Clients%20Portal:jane%40acme.io?')
+        ->and($setup->provisioningUri)->toContain('issuer=Clients%20Portal');
+});
+
 it('regenerates recovery codes through the trait verb', function (): void {
     $user = TwoFactorUser::factory()->create();
     $setup = $user->startTwoFactorEnrolment();

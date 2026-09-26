@@ -178,7 +178,7 @@ final class TwoFactor implements TwoFactorService
         return ProvisioningUri::totp(
             $secret,
             $label,
-            $issuer ?? $this->issuer(),
+            $issuer ?? ConfigGuard::issuer(),
             ConfigGuard::algorithm(),
             ConfigGuard::digits(),
             ConfigGuard::period(),
@@ -285,12 +285,5 @@ final class TwoFactor implements TwoFactorService
         return new RecoveryCodeManager(
             RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
         );
-    }
-
-    private function issuer(): string
-    {
-        $issuer = config('two-factor.issuer') ?? config('app.name');
-
-        return (string) $issuer;
     }
 }

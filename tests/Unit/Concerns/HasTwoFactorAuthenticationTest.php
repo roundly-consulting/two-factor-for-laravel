@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Illuminate\Support\Carbon;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\CustomLabelUser;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
@@ -42,6 +44,19 @@ it('matches the facade verifyFor result', function (): void {
 
     expect($user->verifyTwoFactorCode('123456'))->toBeTrue();
     $fake->assertVerifiedFor($user);
+});
+
+it('attempts a code through the trait verb and reports the method', function (): void {
+    $fake = TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(3);
+    $user = TwoFactorUser::factory()->create();
+
+    $result = $user->attemptTwoFactorCode('ABCDE-FGHIJ');
+
+    expect($result)->toBeInstanceOf(VerificationResult::class)
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::RecoveryCode)
+        ->remainingRecoveryCodes->toBe(3);
+    $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
 });
 
 it('regenerates recovery codes through the trait verb', function (): void {

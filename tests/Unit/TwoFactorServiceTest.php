@@ -6,9 +6,15 @@ use Illuminate\Support\Carbon;
 use RoundlyConsulting\Crypto\Codec\Base32;
 use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
 use RoundlyConsulting\Crypto\Otp\Totp;
+use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
+use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
+use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
 /** The RFC 4226 test seed, as the base32 an authenticator app would show. */
 function testSecret(): string
@@ -169,3 +175,133 @@ it('rejects an unsupported algorithm rather than downgrading the hash', function
 
     TwoFactor::currentCode(testSecret());
 })->throws(InvalidTwoFactorConfigException::class);
+
+/**
+ * A confirmed enrolment with an untouched replay guard (confirmed_at stamped
+ * directly, so no timestep is spent before the test runs).
+ *
+ * @return array{0: TwoFactorUser, 1: TwoFactorSetup}
+ */
+function attemptableUser(): array
+{
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+
+    $user->setAttribute((string) config('two-factor.columns.confirmed_at'), now());
+    $user->save();
+
+    /** @var TwoFactorUser $fresh */
+    $fresh = $user->fresh();
+
+    return [$fresh, $setup];
+}
+
+it('attempts a totp code and reports it with the recovery codes untouched', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    [$user, $setup] = attemptableUser();
+
+    $result = TwoFactor::attempt($user, TwoFactor::currentCode($setup->secret));
+
+    expect($result)->toBeInstanceOf(VerificationResult::class)
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::Totp)
+        ->remainingRecoveryCodes->toBe(8)
+        ->replayed->toBeFalse();
+
+    Carbon::setTestNow();
+});
+
+it('attempts a recovery code and reports one fewer remaining', function (): void {
+    [$user, $setup] = attemptableUser();
+
+    expect(TwoFactor::attempt($user, $setup->recoveryCodes[0]))
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::RecoveryCode)
+        ->remainingRecoveryCodes->toBe(7)
+        ->replayed->toBeFalse();
+
+    expect(TwoFactor::attempt($user->fresh(), $setup->recoveryCodes[1]))
+        ->remainingRecoveryCodes->toBe(6);
+});
+
+it('reports a replayed timestep as a failure flagged replayed', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    [$user, $setup] = attemptableUser();
+    $code = TwoFactor::currentCode($setup->secret);
+
+    expect(TwoFactor::attempt($user, $code)->verified)->toBeTrue();
+
+    expect(TwoFactor::attempt($user->fresh(), $code))
+        ->verified->toBeFalse()
+        ->method->toBeNull()
+        ->replayed->toBeTrue()
+        ->remainingRecoveryCodes->toBe(8);
+
+    Carbon::setTestNow();
+});
+
+it('reports a wrong code as a plain failure', function (): void {
+    [$user] = attemptableUser();
+
+    expect(TwoFactor::attempt($user, '000000'))
+        ->verified->toBeFalse()
+        ->method->toBeNull()
+        ->replayed->toBeFalse()
+        ->remainingRecoveryCodes->toBe(8);
+});
+
+it('fails a pending enrolment even with its valid code', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+
+    expect(TwoFactor::attempt($user->fresh(), TwoFactor::currentCode($setup->secret)))
+        ->verified->toBeFalse()
+        ->method->toBeNull()
+        ->remainingRecoveryCodes->toBe(8);
+
+    Carbon::setTestNow();
+});
+
+it('fails a user with no enrolment at all', function (): void {
+    expect(TwoFactor::attempt(TwoFactorUser::factory()->create(), '123456'))
+        ->verified->toBeFalse()
+        ->remainingRecoveryCodes->toBe(0);
+});
+
+it('throws once the per-user limiter is exhausted', function (): void {
+    config(['two-factor.attempts' => ['max' => 2, 'decay' => 60]]);
+    [$user] = attemptableUser();
+
+    TwoFactor::attempt($user, '000000');
+    TwoFactor::attempt($user, '000000');
+
+    TwoFactor::attempt($user, '000000');
+})->throws(TwoFactorRateLimitedException::class);
+
+it('agrees with verifyFor for every outcome', function (string $kind, bool $expected): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+
+    // Two identical users so each call sees the same state rather than the
+    // other's side effects (a spent code, a claimed timestep).
+    [$a, $setupA] = attemptableUser();
+    [$b, $setupB] = attemptableUser();
+
+    $code = static fn (TwoFactorSetup $setup): string => match ($kind) {
+        'totp' => TwoFactor::currentCode($setup->secret),
+        'recovery' => $setup->recoveryCodes[0],
+        'wrong' => '000000',
+        'malformed' => 'not-a-code',
+    };
+
+    // Pinned to the expected outcome too, so two equally broken answers cannot agree.
+    expect(TwoFactor::attempt($a, $code($setupA))->verified)->toBe($expected)
+        ->and(TwoFactor::verifyFor($b, $code($setupB)))->toBe($expected);
+
+    Carbon::setTestNow();
+})->with([
+    'totp' => ['totp', true],
+    'recovery code' => ['recovery', true],
+    'wrong code' => ['wrong', false],
+    'malformed code' => ['malformed', false],
+]);

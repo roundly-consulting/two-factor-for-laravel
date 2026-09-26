@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
@@ -206,4 +207,58 @@ it('lets only one of two racing submissions of the same totp code through', func
         ->and(TwoFactor::verifyFor($requestB, $code))->toBeFalse();
 
     Event::assertDispatchedTimes(TwoFactorReplayDetected::class, 1);
+});
+
+it('reports the locked row count, not the stale instance, to a racing attempt', function (): void {
+    [$user, $setup] = racingUser();
+
+    /** @var TwoFactorUser $requestA */
+    $requestA = TwoFactorUser::query()->findOrFail($user->getKey());
+    /** @var TwoFactorUser $requestB */
+    $requestB = TwoFactorUser::query()->findOrFail($user->getKey());
+
+    expect(TwoFactor::attempt($requestA, $setup->recoveryCodes[0]))
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::RecoveryCode)
+        ->remainingRecoveryCodes->toBe(7);
+
+    // B still holds eight codes in memory; the count it is told comes from the
+    // row it re-read under the lock, where A's spend has already landed.
+    expect($requestB->twoFactorRecoveryCodes())->toHaveCount(8);
+
+    expect(TwoFactor::attempt($requestB, $setup->recoveryCodes[0]))
+        ->verified->toBeFalse()
+        ->remainingRecoveryCodes->toBe(7);
+
+    expect(TwoFactor::attempt($requestB, $setup->recoveryCodes[1]))
+        ->verified->toBeTrue()
+        ->remainingRecoveryCodes->toBe(6);
+});
+
+it('reports the losing racer of a totp code as replayed', function (): void {
+    [$user, $setup] = racingUser();
+    $code = TwoFactor::currentCode($setup->secret);
+
+    /** @var TwoFactorUser $requestA */
+    $requestA = TwoFactorUser::query()->findOrFail($user->getKey());
+    /** @var TwoFactorUser $requestB */
+    $requestB = TwoFactorUser::query()->findOrFail($user->getKey());
+
+    expect(TwoFactor::attempt($requestA, $code))
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::Totp);
+
+    expect(TwoFactor::attempt($requestB, $code))
+        ->verified->toBeFalse()
+        ->replayed->toBeTrue();
+});
+
+it('reports zero remaining when the row vanished before the locked read', function (): void {
+    [$user, $setup] = racingUser();
+
+    TwoFactorUser::query()->whereKey($user->getKey())->delete();
+
+    expect(TwoFactor::attempt($user, $setup->recoveryCodes[0]))
+        ->verified->toBeFalse()
+        ->remainingRecoveryCodes->toBe(0);
 });

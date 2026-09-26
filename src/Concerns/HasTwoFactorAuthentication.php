@@ -12,6 +12,7 @@ use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use SensitiveParameter;
 
@@ -66,6 +67,15 @@ trait HasTwoFactorAuthentication
     public function confirmTwoFactor(#[SensitiveParameter] string $code): void
     {
         app(ConfirmEnrolment::class)->execute($this, $code);
+    }
+
+    /**
+     * Attempt a login-challenge code and learn which factor passed it (TOTP or
+     * a recovery code) and how many recovery codes remain.
+     */
+    public function attemptTwoFactorCode(#[SensitiveParameter] string $code): VerificationResult
+    {
+        return app(TwoFactorService::class)->attempt($this, $code);
     }
 
     /**

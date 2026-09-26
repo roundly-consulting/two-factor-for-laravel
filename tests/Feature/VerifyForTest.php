@@ -6,6 +6,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
@@ -148,14 +149,15 @@ it('dispatches TwoFactorVerified on a successful totp verify', function (): void
 
     Event::assertDispatched(
         TwoFactorVerified::class,
-        fn (TwoFactorVerified $event): bool => $event->viaRecoveryCode === false,
+        fn (TwoFactorVerified $event): bool => $event->method === TwoFactorMethod::Totp,
     );
+    Event::assertNotDispatched(RecoveryCodeConsumed::class);
     Event::assertNotDispatched(TwoFactorVerificationFailed::class);
 
     Carbon::setTestNow();
 });
 
-it('dispatches TwoFactorVerified with the recovery flag on a recovery success', function (): void {
+it('dispatches TwoFactorVerified with the recovery-code method on a recovery success', function (): void {
     Event::fake();
     [$user, $setup] = enrolledUserWithSetup();
 
@@ -163,8 +165,38 @@ it('dispatches TwoFactorVerified with the recovery flag on a recovery success', 
 
     Event::assertDispatched(
         TwoFactorVerified::class,
-        fn (TwoFactorVerified $event): bool => $event->viaRecoveryCode === true,
+        fn (TwoFactorVerified $event): bool => $event->method === TwoFactorMethod::RecoveryCode
+            && $event->user->is($user),
     );
+});
+
+it('dispatches RecoveryCodeConsumed with the count left after each spend', function (): void {
+    Event::fake();
+    [$user, $setup] = enrolledUserWithSetup();
+
+    TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[0]);
+    TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[1]);
+
+    Event::assertDispatchedTimes(RecoveryCodeConsumed::class, 2);
+    Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->remaining === 7);
+    Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->remaining === 6);
+});
+
+it('counts down to zero as the last recovery code is spent', function (): void {
+    Event::fake();
+    config(['two-factor.recovery_codes.count' => 1]);
+    [$user, $setup] = enrolledUserWithSetup();
+
+    expect(TwoFactor::attempt($user->fresh(), $setup->recoveryCodes[0]))
+        ->verified->toBeTrue()
+        ->remainingRecoveryCodes->toBe(0);
+
+    Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->remaining === 0);
+
+    // With the list exhausted the same code — and any other — now fails.
+    expect(TwoFactor::attempt($user->fresh(), $setup->recoveryCodes[0]))
+        ->verified->toBeFalse()
+        ->remainingRecoveryCodes->toBe(0);
 });
 
 it('dispatches TwoFactorVerificationFailed on a genuine failure', function (): void {

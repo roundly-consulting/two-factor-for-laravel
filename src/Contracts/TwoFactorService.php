@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Contracts;
 
 use Illuminate\Database\Eloquent\Model;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
+use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use SensitiveParameter;
 
 /**
@@ -27,6 +29,20 @@ interface TwoFactorService
         ?int $window = null,
     ): int|false;
 
+    /**
+     * Attempt a login-challenge code: TOTP with replay protection, then a
+     * single-use recovery-code fallback. Reports which factor passed and how
+     * many recovery codes remain.
+     *
+     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
+     */
+    public function attempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult;
+
+    /**
+     * Whether a login-challenge code passes — attempt()->verified.
+     *
+     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
+     */
     public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool;
 
     public function provisioningUri(

@@ -16,7 +16,9 @@ use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\AttemptLimit;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
@@ -31,7 +33,7 @@ use SensitiveParameter;
 
 /**
  * The package's public entry point: TOTP primitives plus the replay-safe,
- * recovery-aware verifyFor() used during a login challenge.
+ * recovery-aware attempt()/verifyFor() used during a login challenge.
  *
  * The OTP maths, the base32 codec and the CSPRNG all come from
  * crypto-for-laravel. This class is the boundary: it builds those primitives
@@ -96,22 +98,25 @@ final class TwoFactor implements TwoFactorService
     }
 
     /**
-     * Verify a code for a user: TOTP with replay protection, then a single-use
-     * recovery-code fallback. Returns whether the code was accepted.
+     * Attempt a code for a user: TOTP with replay protection, then a single-use
+     * recovery-code fallback. Reports which factor passed and how many recovery
+     * codes remain, so a caller never has to listen to its own call.
+     *
+     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
      */
-    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
+    public function attempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
         // Only a fully confirmed enrolment can satisfy a login challenge; a
         // secret that was persisted but never confirmed is not a working second
         // factor (finding 7).
         if (! $user->hasTwoFactorEnabled()) {
-            return false;
+            return VerificationResult::failed($this->remaining($user));
         }
 
         $secret = $user->twoFactorSecret();
 
         if ($secret === null) {
-            return false;
+            return VerificationResult::failed($this->remaining($user));
         }
 
         $limit = ConfigGuard::attemptLimit();
@@ -131,26 +136,38 @@ final class TwoFactor implements TwoFactorService
                 $this->registerFailure($limit, $key);
                 $this->events?->dispatch(new TwoFactorReplayDetected($user, $timestep));
 
-                return false;
+                return VerificationResult::failed($this->remaining($user), replayed: true);
             }
 
             $this->clearAttempts($limit, $key);
-            $this->events?->dispatch(new TwoFactorVerified($user, viaRecoveryCode: false));
+            $this->events?->dispatch(new TwoFactorVerified($user, TwoFactorMethod::Totp));
 
-            return true;
+            return VerificationResult::via(TwoFactorMethod::Totp, $this->remaining($user));
         }
 
-        if ($this->consumeRecoveryCode($user, $code)) {
-            $this->clearAttempts($limit, $key);
-            $this->events?->dispatch(new TwoFactorVerified($user, viaRecoveryCode: true));
+        $result = $this->consumeRecoveryCode($user, $code);
 
-            return true;
+        if ($result->verified) {
+            $this->clearAttempts($limit, $key);
+            $this->events?->dispatch(new TwoFactorVerified($user, TwoFactorMethod::RecoveryCode));
+
+            return $result;
         }
 
         $this->registerFailure($limit, $key);
         $this->events?->dispatch(new TwoFactorVerificationFailed($user));
 
-        return false;
+        return $result;
+    }
+
+    /**
+     * Verify a code for a user — {@see attempt()} reduced to whether it passed.
+     *
+     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
+     */
+    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
+    {
+        return $this->attempt($user, $code)->verified;
     }
 
     public function provisioningUri(
@@ -178,7 +195,12 @@ final class TwoFactor implements TwoFactorService
         return $this->recoveryCodes()->generate($count);
     }
 
-    private function consumeRecoveryCode(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
+    /**
+     * The recovery-code fallback. The remaining count comes from the row read
+     * under the lock, so it is the true count even when the caller's instance
+     * is stale.
+     */
+    private function consumeRecoveryCode(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
         $manager = $this->recoveryCodes();
         $column = (string) config('two-factor.columns.recovery_codes');
@@ -188,18 +210,19 @@ final class TwoFactor implements TwoFactorService
         // stale in-memory list and double-spend it (finding 1). The write is
         // scoped to the freshly-loaded row, never the host's own instance, so no
         // unrelated dirty attribute is flushed (finding 11).
-        $consumed = $user->getConnection()->transaction(function () use ($user, $code, $manager, $column): bool {
+        $result = $user->getConnection()->transaction(function () use ($user, $code, $manager, $column): VerificationResult {
             /** @var (TwoFactorAuthenticatable&Model)|null $locked */
             $locked = $user->newQuery()->lockForUpdate()->find($user->getKey());
 
             if ($locked === null) {
-                return false;
+                return VerificationResult::failed(0);
             }
 
-            $remaining = $manager->consume($locked->twoFactorRecoveryCodes(), $code);
+            $current = $locked->twoFactorRecoveryCodes();
+            $remaining = $manager->consume($current, $code);
 
             if ($remaining === null) {
-                return false;
+                return VerificationResult::failed(count($current));
             }
 
             $locked->timestamps = false;
@@ -210,16 +233,19 @@ final class TwoFactor implements TwoFactorService
             $user->setAttribute($column, $remaining);
             $user->syncOriginalAttribute($column);
 
-            return true;
+            return VerificationResult::via(TwoFactorMethod::RecoveryCode, count($remaining));
         });
 
-        if (! $consumed) {
-            return false;
+        if ($result->verified) {
+            $this->events?->dispatch(new RecoveryCodeConsumed($user, $result->remainingRecoveryCodes));
         }
 
-        $this->events?->dispatch(new RecoveryCodeConsumed($user));
+        return $result;
+    }
 
-        return true;
+    private function remaining(TwoFactorAuthenticatable $user): int
+    {
+        return count($user->twoFactorRecoveryCodes());
     }
 
     private function registerFailure(?AttemptLimit $limit, string $key): void

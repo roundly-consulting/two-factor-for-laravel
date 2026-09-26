@@ -8,14 +8,17 @@ use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\Crypto\Hash\ConstantTime;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
+use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAssertionFailedException;
 use SensitiveParameter;
 
 /**
  * A first-class, no-crypto testing double for {@see TwoFactorService}, swapped in
  * by TwoFactor::fake(). It performs NO TOTP math — outcomes are programmable
- * (accept/reject/acceptCode) and every verifyFor() call is recorded so a host can
- * assert its 2FA flow without freezing the clock or threading real secrets.
+ * (accept/acceptRecoveryCode/reject/replay/acceptCode) and every attempt()/verifyFor()
+ * call is recorded so a host can assert its 2FA flow without freezing the clock or
+ * threading real secrets.
  *
  * Test-only: it lives in runtime autoload purely to follow Laravel's own Fakes
  * pattern, is bound solely via TwoFactor::fake(), and must never reach production.
@@ -26,6 +29,9 @@ use SensitiveParameter;
  * $fake = TwoFactor::fake()->accept();
  * $this->post('/login/2fa', ['code' => '123456'])->assertOk();
  * $fake->assertVerifiedFor($user);
+ *
+ * TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(2);
+ * $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
  * ```
  */
 final class FakeTwoFactor implements TwoFactorService
@@ -38,13 +44,19 @@ final class FakeTwoFactor implements TwoFactorService
 
     private ?string $onlyCode = null;
 
+    private TwoFactorMethod $method = TwoFactorMethod::Totp;
+
+    private bool $replays = false;
+
+    private ?int $remainingRecoveryCodes = null;
+
     private ?string $secret = null;
 
     /** @var list<string>|null */
     private ?array $recoveryCodes = null;
 
     /**
-     * @var list<array{user: TwoFactorAuthenticatable&Model, code: string, verified: bool}>
+     * @var list<array{user: TwoFactorAuthenticatable&Model, code: string, verified: bool, method: TwoFactorMethod|null}>
      */
     private array $verifications = [];
 
@@ -52,33 +64,63 @@ final class FakeTwoFactor implements TwoFactorService
     private array $attemptedCodes = [];
 
     /**
-     * Make every verify()/verifyFor() succeed (the default).
+     * Make every verify()/attempt()/verifyFor() succeed via TOTP (the default).
      */
     public function accept(): self
     {
-        $this->accepts = true;
-        $this->onlyCode = null;
-
-        return $this;
+        return $this->succeedVia(TwoFactorMethod::Totp);
     }
 
     /**
-     * Make every verify()/verifyFor() fail.
+     * Make every attempt()/verifyFor() succeed as if a recovery code was spent.
+     */
+    public function acceptRecoveryCode(): self
+    {
+        return $this->succeedVia(TwoFactorMethod::RecoveryCode);
+    }
+
+    /**
+     * Make every verify()/attempt()/verifyFor() fail.
      */
     public function reject(): self
     {
         $this->accepts = false;
         $this->onlyCode = null;
+        $this->replays = false;
 
         return $this;
     }
 
     /**
-     * Accept only this exact code; every other code fails.
+     * Make every attempt() fail as a replay — a valid code whose timestep was
+     * already claimed (`replayed: true`).
+     */
+    public function replay(): self
+    {
+        $this->reject();
+        $this->replays = true;
+
+        return $this;
+    }
+
+    /**
+     * Accept only this exact code (via the current method); every other code fails.
      */
     public function acceptCode(#[SensitiveParameter] string $code): self
     {
         $this->onlyCode = $code;
+        $this->replays = false;
+
+        return $this;
+    }
+
+    /**
+     * Pin the remaining recovery-code count attempt() reports. Unset, the fake
+     * reports the user's stored count, one lower when a recovery code passes.
+     */
+    public function withRemainingRecoveryCodes(int $remaining): self
+    {
+        $this->remainingRecoveryCodes = max(0, $remaining);
 
         return $this;
     }
@@ -127,15 +169,25 @@ final class FakeTwoFactor implements TwoFactorService
         return $this->passes($code) ? 0 : false;
     }
 
-    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
+    public function attempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
         $this->attemptedCodes[] = $code;
 
-        $verified = $this->passes($code);
+        $result = $this->outcome($user, $code);
 
-        $this->verifications[] = ['user' => $user, 'code' => $code, 'verified' => $verified];
+        $this->verifications[] = [
+            'user' => $user,
+            'code' => $code,
+            'verified' => $result->verified,
+            'method' => $result->method,
+        ];
 
-        return $verified;
+        return $result;
+    }
+
+    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
+    {
+        return $this->attempt($user, $code)->verified;
     }
 
     public function provisioningUri(
@@ -204,6 +256,19 @@ final class FakeTwoFactor implements TwoFactorService
         );
     }
 
+    public function assertVerifiedVia(TwoFactorMethod $method): void
+    {
+        foreach ($this->verifications as $verification) {
+            if ($verification['verified'] && $verification['method'] === $method) {
+                return;
+            }
+        }
+
+        throw new TwoFactorAssertionFailedException(
+            "Expected a successful verification via [{$method->value}], but none was recorded.",
+        );
+    }
+
     public function assertVerificationFailed(): void
     {
         foreach ($this->verifications as $verification) {
@@ -246,6 +311,33 @@ final class FakeTwoFactor implements TwoFactorService
                 'Expected the given code to have been attempted, but it was not.',
             );
         }
+    }
+
+    private function succeedVia(TwoFactorMethod $method): self
+    {
+        $this->accepts = true;
+        $this->onlyCode = null;
+        $this->replays = false;
+        $this->method = $method;
+
+        return $this;
+    }
+
+    private function outcome(TwoFactorAuthenticatable $user, #[SensitiveParameter] string $code): VerificationResult
+    {
+        $stored = count($user->twoFactorRecoveryCodes());
+
+        if ($this->replays) {
+            return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored, replayed: true);
+        }
+
+        if (! $this->passes($code)) {
+            return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored);
+        }
+
+        $spent = $this->method === TwoFactorMethod::RecoveryCode ? 1 : 0;
+
+        return VerificationResult::via($this->method, $this->remainingRecoveryCodes ?? max(0, $stored - $spent));
     }
 
     private function passes(#[SensitiveParameter] string $code): bool

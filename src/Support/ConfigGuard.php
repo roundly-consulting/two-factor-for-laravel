@@ -120,11 +120,19 @@ final class ConfigGuard
     }
 
     /**
-     * The default provisioning issuer: `two-factor.issuer`, else the app name.
-     * A caller-supplied issuer (per guard, per tenant) always wins over this.
+     * The provisioning issuer: the caller's (per guard, per tenant), else
+     * `two-factor.issuer`, else the app name. A blank value at either level counts
+     * as unset — `TWO_FACTOR_ISSUER=` in a .env is an empty string, not null, and
+     * must not brand every authenticator entry with an empty issuer.
      */
-    public static function issuer(): string
+    public static function issuer(?string $override = null): string
     {
-        return (string) (config('two-factor.issuer') ?? config('app.name'));
+        foreach ([$override, config('two-factor.issuer')] as $candidate) {
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return $candidate;
+            }
+        }
+
+        return (string) config('app.name');
     }
 }

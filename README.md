@@ -160,7 +160,7 @@ return [
 | `period` | int | `30` | Seconds per timestep (15–120) |
 | `window` | int | `1` | Accepted drift in ± timesteps (0–2) |
 | `secret_length` | int | `32` | Base32 secret length (≥16); 32 chars = 160 bits |
-| `issuer` | string\|null | `env('TWO_FACTOR_ISSUER')` | Provisioning issuer; falls back to `config('app.name')` |
+| `issuer` | string\|null | `env('TWO_FACTOR_ISSUER')` | Provisioning issuer; null or blank falls back to `config('app.name')` |
 | `recovery_codes.count` | int | `8` | Recovery codes generated per enrolment |
 | `recovery_codes.storage` | string | `hashed` | `hashed` (one-way, default) or `encrypted` (reversible, display-again) |
 | `attempts` | array\|null | `['max' => 5, 'decay' => 60]` | Built-in per-user brute-force limiter; `null` disables it |
@@ -217,8 +217,8 @@ $setup->recoveryCodes;   // list<string> — show these once, they are the only 
 $setup->issuer;          // the issuer the URI carries — show it next to the QR
 ```
 
-The issuer defaults to `two-factor.issuer`, then `app.name`. Brand it per call — one name per
-guard or tenant — with the `issuer` argument:
+The issuer defaults to `two-factor.issuer`, then `app.name` (a blank value at either level counts
+as unset). Brand it per call — one name per guard or tenant — with the `issuer` argument:
 
 ```php
 $setup = app(StartEnrolment::class)->execute($client, issuer: 'Acme Partner Portal');

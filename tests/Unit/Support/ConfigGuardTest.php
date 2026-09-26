@@ -71,3 +71,20 @@ it('resolves the default issuer from config, then the app name', function (): vo
     config(['two-factor.issuer' => null]);
     expect(ConfigGuard::issuer())->toBe('App');
 });
+
+it('treats a blank configured issuer as unset', function (string $blank): void {
+    // `TWO_FACTOR_ISSUER=` in a .env is an empty string, not null — it must not
+    // brand every authenticator entry with an empty issuer.
+    config(['two-factor.issuer' => $blank, 'app.name' => 'App']);
+
+    expect(ConfigGuard::issuer())->toBe('App');
+})->with(['empty' => [''], 'whitespace' => ['   ']]);
+
+it('prefers a non-blank caller issuer and ignores a blank one', function (): void {
+    config(['two-factor.issuer' => 'Acme', 'app.name' => 'App']);
+
+    expect(ConfigGuard::issuer('Tenant'))->toBe('Tenant')
+        ->and(ConfigGuard::issuer(''))->toBe('Acme')
+        ->and(ConfigGuard::issuer('  '))->toBe('Acme')
+        ->and(ConfigGuard::issuer(null))->toBe('Acme');
+});

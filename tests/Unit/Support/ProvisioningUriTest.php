@@ -41,3 +41,12 @@ it('reflects a non-default algorithm and digit count', function (): void {
     expect($query['algorithm'])->toBe('SHA256')
         ->and($query['digits'])->toBe('8');
 });
+
+it('never emits an empty issuer', function (): void {
+    config(['two-factor.issuer' => '', 'app.name' => 'Fallback App']);
+
+    expect(TwoFactor::provisioningUri('JBSWY3DPEHPK3PXP', 'jane@acme.io'))
+        ->toStartWith('otpauth://totp/Fallback%20App:jane%40acme.io?')
+        ->and(TwoFactor::provisioningUri('JBSWY3DPEHPK3PXP', 'jane@acme.io', ''))
+        ->toStartWith('otpauth://totp/Fallback%20App:jane%40acme.io?');
+});

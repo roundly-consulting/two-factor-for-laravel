@@ -17,7 +17,7 @@ return [
     'secret_length' => 32,                        // base32 chars (≥16); 32 = 160 bits
 
     // Provisioning (otpauth:// URI). issuer falls back to config('app.name') at runtime.
-    'issuer' => env('TWO_FACTOR_ISSUER'),         // null → app.name
+    'issuer' => env('TWO_FACTOR_ISSUER'),         // null/blank → app.name
 
     'recovery_codes' => [
         'count' => 8,

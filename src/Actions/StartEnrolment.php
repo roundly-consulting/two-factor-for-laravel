@@ -55,7 +55,7 @@ final class StartEnrolment
 
         // Resolved here and passed explicitly, so the URI and the setup's issuer
         // can never disagree — whichever service is bound.
-        $issuer ??= ConfigGuard::issuer();
+        $issuer = ConfigGuard::issuer($issuer);
 
         return new TwoFactorSetup(
             secret: $secret,

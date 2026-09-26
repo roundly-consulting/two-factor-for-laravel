@@ -178,7 +178,7 @@ final class TwoFactor implements TwoFactorService
         return ProvisioningUri::totp(
             $secret,
             $label,
-            $issuer ?? ConfigGuard::issuer(),
+            ConfigGuard::issuer($issuer),
             ConfigGuard::algorithm(),
             ConfigGuard::digits(),
             ConfigGuard::period(),

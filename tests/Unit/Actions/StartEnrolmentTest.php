@@ -74,3 +74,13 @@ it('keeps the setup issuer and the uri in agreement under the fake', function ()
     expect($setup->issuer)->toBe('Configured Issuer')
         ->and($setup->provisioningUri)->toContain('issuer=Configured%20Issuer');
 });
+
+it('falls back to the configured issuer when a blank one is passed', function (): void {
+    config(['two-factor.issuer' => 'Configured Issuer']);
+    $user = TwoFactorUser::factory()->create(['email' => 'jane@acme.io']);
+
+    $setup = app(StartEnrolment::class)->execute($user, issuer: '');
+
+    expect($setup->issuer)->toBe('Configured Issuer')
+        ->and($setup->provisioningUri)->toStartWith('otpauth://totp/Configured%20Issuer:jane%40acme.io?');
+});

@@ -17,4 +17,13 @@ return new class extends Migration
             $table->twoFactorColumns();
         });
     }
+
+    // This file lives in your app's migration history and alters your own table,
+    // so `migrate:rollback` / `migrate:refresh` can unwind it.
+    public function down(): void
+    {
+        Schema::table(TwoFactorColumns::table(), function (Blueprint $table): void {
+            $table->dropTwoFactorColumns();
+        });
+    }
 };

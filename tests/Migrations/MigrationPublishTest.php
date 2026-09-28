@@ -85,10 +85,57 @@ it('runs the published migration against the configured account table', function
     rmdir($directory);
 });
 
+/**
+ * The published file lives in the host's own migration history, so `migrate:rollback`
+ * and `migrate:refresh` must be able to unwind it: without a `down()` a rollback was a
+ * silent no-op that dropped the migration record and left the columns, and the next
+ * `migrate` failed on a duplicate `two_factor_secret` column.
+ */
+it('rolls the published migration back so a re-run applies cleanly', function () use ($stub): void {
+    Schema::create('clients', function (Blueprint $table): void {
+        $table->id();
+        $table->string('email');
+    });
+
+    config(['two-factor.table' => 'clients']);
+
+    $directory = sys_get_temp_dir().'/two-factor-rollback-'.Str::random(8);
+    mkdir($directory);
+    $file = $directory.'/2026_01_01_000000_add_two_factor_columns_to_users_table.php';
+    copy($stub, $file);
+
+    $migration = require $file;
+    $columns = [
+        'two_factor_secret',
+        'two_factor_recovery_codes',
+        'two_factor_confirmed_at',
+        'two_factor_last_used_timestep',
+    ];
+
+    // migrate → rollback → migrate, the sequence that used to fail.
+    $migration->up();
+    $migration->down();
+
+    foreach ($columns as $column) {
+        expect(Schema::hasColumn('clients', $column))->toBeFalse();
+    }
+
+    expect(Schema::hasColumn('clients', 'email'))->toBeTrue();
+
+    $migration->up();
+
+    expect(Schema::hasColumns('clients', $columns))->toBeTrue();
+
+    Schema::drop('clients');
+    array_map(unlink(...), (array) glob($directory.'/*'));
+    rmdir($directory);
+});
+
 it('ships a stub that names its table only through the config-driven helper', function () use ($stub): void {
     $body = (string) file_get_contents($stub);
 
-    // A literal table name here would silently ignore `two-factor.table`.
+    // A literal table name here would silently ignore `two-factor.table` — in `up()`
+    // or in `down()`, which must unwind the same table `up()` altered.
     expect(preg_match("/Schema::table\\(\\s*'/", $body))->toBe(0)
-        ->and(substr_count($body, 'Schema::table(TwoFactorColumns::table()'))->toBe(1);
+        ->and(substr_count($body, 'Schema::table(TwoFactorColumns::table()'))->toBe(2);
 });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace RoundlyConsulting\TwoFactor\Testing;
 
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\Crypto\Hash\ConstantTime;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
@@ -11,14 +12,20 @@ use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAssertionFailedException;
+use RoundlyConsulting\TwoFactor\UserTwoFactor;
 use SensitiveParameter;
 
 /**
  * A first-class, no-crypto testing double for {@see TwoFactorService}, swapped in
  * by TwoFactor::fake(). It performs NO TOTP math — outcomes are programmable
- * (accept/acceptRecoveryCode/reject/replay/acceptCode) and every attempt()/verifyFor()
- * call is recorded so a host can assert its 2FA flow without freezing the clock or
- * threading real secrets.
+ * (accept/acceptRecoveryCode/reject/replay/acceptCode) and every
+ * `for($user)->attempt()` is recorded so a host can assert its 2FA flow without
+ * freezing the clock or threading real secrets.
+ *
+ * Enrolment writes (`start`, `confirm`, `disable`, `recoveryCodes()->regenerate`)
+ * run the real actions against the fake's canned secret, codes and programmable
+ * `verify()`, and are recorded once they succeed — including calls made through
+ * the `HasTwoFactorAuthentication` verbs, which route through `for($user)`.
  *
  * Test-only: it lives in runtime autoload purely to follow Laravel's own Fakes
  * pattern, is bound solely via TwoFactor::fake(), and must never reach production.
@@ -30,11 +37,11 @@ use SensitiveParameter;
  * $this->post('/login/2fa', ['code' => '123456'])->assertOk();
  * $fake->assertVerifiedFor($user);
  *
- * TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(2);
- * $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
+ * $this->post('/two-factor/disable')->assertOk();
+ * $fake->assertDisabled($user);
  * ```
  */
-final class FakeTwoFactor implements TwoFactorService
+final class TwoFactorFake implements TwoFactorService
 {
     private const CANNED_SECRET = 'FAKESECRET234567';
 
@@ -63,8 +70,29 @@ final class FakeTwoFactor implements TwoFactorService
     /** @var list<string> */
     private array $attemptedCodes = [];
 
+    /** @var list<Model> */
+    private array $started = [];
+
+    /** @var list<Model> */
+    private array $confirmed = [];
+
+    /** @var list<Model> */
+    private array $disabled = [];
+
+    /** @var list<Model> */
+    private array $regenerated = [];
+
+    public function __construct(
+        private readonly Container $container,
+    ) {}
+
+    public function for(TwoFactorAuthenticatable&Model $user): UserTwoFactor
+    {
+        return new RecordingUserTwoFactor($this, $this->container, $user);
+    }
+
     /**
-     * Make every verify()/attempt()/verifyFor() succeed via TOTP (the default).
+     * Make every verify() and attempt() succeed via TOTP (the default).
      */
     public function accept(): self
     {
@@ -72,7 +100,7 @@ final class FakeTwoFactor implements TwoFactorService
     }
 
     /**
-     * Make every attempt()/verifyFor() succeed as if a recovery code was spent.
+     * Make every attempt() succeed as if a recovery code was spent.
      */
     public function acceptRecoveryCode(): self
     {
@@ -80,7 +108,7 @@ final class FakeTwoFactor implements TwoFactorService
     }
 
     /**
-     * Make every verify()/attempt()/verifyFor() fail.
+     * Make every verify() and attempt() fail.
      */
     public function reject(): self
     {
@@ -169,27 +197,6 @@ final class FakeTwoFactor implements TwoFactorService
         return $this->passes($code) ? 0 : false;
     }
 
-    public function attempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
-    {
-        $this->attemptedCodes[] = $code;
-
-        $result = $this->outcome($user, $code);
-
-        $this->verifications[] = [
-            'user' => $user,
-            'code' => $code,
-            'verified' => $result->verified,
-            'method' => $result->method,
-        ];
-
-        return $result;
-    }
-
-    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
-    {
-        return $this->attempt($user, $code)->verified;
-    }
-
     public function provisioningUri(
         #[SensitiveParameter] string $secret,
         string $label,
@@ -228,6 +235,111 @@ final class FakeTwoFactor implements TwoFactorService
             static fn (int $i): string => sprintf('FAKE-%04d-%04d', $i, $i),
             range(1, $count),
         );
+    }
+
+    /**
+     * The programmed outcome of `for($user)->attempt($code)`, recorded.
+     *
+     * @internal called by the recording handle
+     */
+    public function recordAttempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
+    {
+        $this->attemptedCodes[] = $code;
+
+        $result = $this->outcome($user, $code);
+
+        $this->verifications[] = [
+            'user' => $user,
+            'code' => $code,
+            'verified' => $result->verified,
+            'method' => $result->method,
+        ];
+
+        return $result;
+    }
+
+    /**
+     * @internal called by the recording handle
+     */
+    public function recordStarted(Model $user): void
+    {
+        $this->started[] = $user;
+    }
+
+    /**
+     * @internal called by the recording handle
+     */
+    public function recordConfirmed(Model $user): void
+    {
+        $this->confirmed[] = $user;
+    }
+
+    /**
+     * @internal called by the recording handle
+     */
+    public function recordDisabled(Model $user): void
+    {
+        $this->disabled[] = $user;
+    }
+
+    /**
+     * @internal called by the recording handle
+     */
+    public function recordRegenerated(Model $user): void
+    {
+        $this->regenerated[] = $user;
+    }
+
+    /**
+     * An enrolment was started — for the given user, when one is passed.
+     */
+    public function assertStarted(?Model $user = null): void
+    {
+        $this->assertRecorded($this->started, $user, 'an enrolment start');
+    }
+
+    public function assertNothingStarted(): void
+    {
+        $this->assertNoneRecorded($this->started, 'enrolment start');
+    }
+
+    /**
+     * An enrolment was confirmed — for the given user, when one is passed.
+     */
+    public function assertConfirmed(?Model $user = null): void
+    {
+        $this->assertRecorded($this->confirmed, $user, 'a confirmed enrolment');
+    }
+
+    public function assertNothingConfirmed(): void
+    {
+        $this->assertNoneRecorded($this->confirmed, 'confirmation');
+    }
+
+    /**
+     * Two-factor was disabled — for the given user, when one is passed.
+     */
+    public function assertDisabled(?Model $user = null): void
+    {
+        $this->assertRecorded($this->disabled, $user, 'two-factor to be disabled');
+    }
+
+    public function assertNothingDisabled(): void
+    {
+        $this->assertNoneRecorded($this->disabled, 'disable');
+    }
+
+    /**
+     * Recovery codes were regenerated — for the given user, when one is passed.
+     */
+    public function assertRegenerated(?Model $user = null): void
+    {
+        $this->assertRecorded($this->regenerated, $user, 'recovery codes to be regenerated');
+    }
+
+    public function assertNothingRegenerated(): void
+    {
+        $this->assertNoneRecorded($this->regenerated, 'recovery-code regeneration');
     }
 
     public function assertVerified(): void
@@ -310,6 +422,34 @@ final class FakeTwoFactor implements TwoFactorService
             throw new TwoFactorAssertionFailedException(
                 'Expected the given code to have been attempted, but it was not.',
             );
+        }
+    }
+
+    /**
+     * @param  list<Model>  $recorded
+     */
+    private function assertRecorded(array $recorded, ?Model $user, string $what): void
+    {
+        foreach ($recorded as $candidate) {
+            if ($user === null || $candidate->is($user)) {
+                return;
+            }
+        }
+
+        $for = $user === null ? '' : ' for the given user';
+
+        throw new TwoFactorAssertionFailedException("Expected {$what}{$for}, but none was recorded.");
+    }
+
+    /**
+     * @param  list<Model>  $recorded
+     */
+    private function assertNoneRecorded(array $recorded, string $what): void
+    {
+        if ($recorded !== []) {
+            $count = count($recorded);
+
+            throw new TwoFactorAssertionFailedException("Expected no {$what}, but {$count} were recorded.");
         }
     }
 

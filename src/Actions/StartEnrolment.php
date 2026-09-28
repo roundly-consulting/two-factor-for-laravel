@@ -21,11 +21,11 @@ use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
  * The issuer defaults to config (then the app name); pass one per guard or
  * tenant to brand the authenticator entry.
  */
-final class StartEnrolment
+final readonly class StartEnrolment
 {
     public function __construct(
-        private readonly TwoFactorService $twoFactor,
-        private readonly ?Dispatcher $events = null,
+        private TwoFactorService $twoFactor,
+        private ?Dispatcher $events = null,
     ) {}
 
     /**

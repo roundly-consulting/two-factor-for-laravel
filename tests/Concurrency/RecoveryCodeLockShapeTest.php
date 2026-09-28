@@ -70,7 +70,7 @@ it('locks a single user row rather than an aggregate the engine would reject', f
 
     LockRecorder::flush();
 
-    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeTrue();
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0])->verified)->toBeTrue();
 
     $locks = LockRecorder::recorded();
 
@@ -136,5 +136,5 @@ it('serialises a rival session on the row it locked', function (): void {
     expect(DB::connection('rival')->table('users')->lockForUpdate()->get())->toHaveCount(1);
 
     // And the flow itself still works on this engine end to end.
-    expect(TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[0]))->toBeTrue();
+    expect(TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[0])->verified)->toBeTrue();
 })->skip(fn (): bool => DriverMatrix::driver() !== 'pgsql', 'the lock is only observable on a real engine');

@@ -16,11 +16,11 @@ use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
  * Replaces the user's recovery codes, returning the new plaintext set to show
  * once.
  */
-final class RegenerateRecoveryCodes
+final readonly class RegenerateRecoveryCodes
 {
     public function __construct(
-        private readonly TwoFactorService $twoFactor,
-        private readonly ?Dispatcher $events = null,
+        private TwoFactorService $twoFactor,
+        private ?Dispatcher $events = null,
     ) {}
 
     /**

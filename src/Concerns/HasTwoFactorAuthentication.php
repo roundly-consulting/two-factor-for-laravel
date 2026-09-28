@@ -5,10 +5,6 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Concerns;
 
 use Illuminate\Database\Eloquent\Model;
-use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
-use RoundlyConsulting\TwoFactor\Actions\DisableTwoFactor;
-use RoundlyConsulting\TwoFactor\Actions\RegenerateRecoveryCodes;
-use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
@@ -28,7 +24,8 @@ use SensitiveParameter;
  * ```
  *
  * Column names are always read through config('two-factor.columns') so a host
- * with a remapped schema stays in control.
+ * with a remapped schema stays in control. Every verb delegates to
+ * `TwoFactor::for($this)`, so `TwoFactor::fake()` sees it.
  *
  * @phpstan-require-extends Model
  *
@@ -59,7 +56,7 @@ trait HasTwoFactorAuthentication
      */
     public function startTwoFactorEnrolment(?string $label = null, ?string $issuer = null): TwoFactorSetup
     {
-        return app(StartEnrolment::class)->execute($this, $label, $issuer);
+        return app(TwoFactorService::class)->for($this)->start($label, $issuer);
     }
 
     /**
@@ -67,7 +64,7 @@ trait HasTwoFactorAuthentication
      */
     public function confirmTwoFactor(#[SensitiveParameter] string $code): void
     {
-        app(ConfirmEnrolment::class)->execute($this, $code);
+        app(TwoFactorService::class)->for($this)->confirm($code);
     }
 
     /**
@@ -76,7 +73,7 @@ trait HasTwoFactorAuthentication
      */
     public function attemptTwoFactorCode(#[SensitiveParameter] string $code): VerificationResult
     {
-        return app(TwoFactorService::class)->attempt($this, $code);
+        return app(TwoFactorService::class)->for($this)->attempt($code);
     }
 
     /**
@@ -85,7 +82,7 @@ trait HasTwoFactorAuthentication
      */
     public function verifyTwoFactorCode(#[SensitiveParameter] string $code): bool
     {
-        return app(TwoFactorService::class)->verifyFor($this, $code);
+        return app(TwoFactorService::class)->for($this)->attempt($code)->verified;
     }
 
     /**
@@ -93,7 +90,7 @@ trait HasTwoFactorAuthentication
      */
     public function disableTwoFactor(): void
     {
-        app(DisableTwoFactor::class)->execute($this);
+        app(TwoFactorService::class)->for($this)->disable();
     }
 
     /**
@@ -103,7 +100,7 @@ trait HasTwoFactorAuthentication
      */
     public function regenerateTwoFactorRecoveryCodes(): array
     {
-        return app(RegenerateRecoveryCodes::class)->execute($this);
+        return app(TwoFactorService::class)->for($this)->recoveryCodes()->regenerate();
     }
 
     /**

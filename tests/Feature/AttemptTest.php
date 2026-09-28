@@ -49,7 +49,7 @@ function enrolledUserWithSetup(): array
 it('returns false for a user without a secret', function (): void {
     $user = TwoFactorUser::factory()->create();
 
-    expect(TwoFactor::verifyFor($user, '123456'))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt('123456')->verified)->toBeFalse();
 });
 
 it('rejects a valid code for an unconfirmed pending enrolment', function (): void {
@@ -59,7 +59,7 @@ it('rejects a valid code for an unconfirmed pending enrolment', function (): voi
 
     // Secret persisted, possession never proven → not a working second factor.
     expect($user->fresh()->hasPendingTwoFactor())->toBeTrue()
-        ->and(TwoFactor::verifyFor($user->fresh(), TwoFactor::currentCode($setup->secret)))->toBeFalse();
+        ->and(TwoFactor::for($user->fresh())->attempt(TwoFactor::currentCode($setup->secret))->verified)->toBeFalse();
 
     Carbon::setTestNow();
 });
@@ -68,7 +68,7 @@ it('accepts a valid current code once', function (): void {
     Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
     $user = enrolledUser();
 
-    expect(TwoFactor::verifyFor($user, TwoFactor::currentCode((string) $user->twoFactorSecret())))->toBeTrue();
+    expect(TwoFactor::for($user)->attempt(TwoFactor::currentCode((string) $user->twoFactorSecret()))->verified)->toBeTrue();
 
     Carbon::setTestNow();
 });
@@ -79,8 +79,8 @@ it('rejects the same code replayed within its window', function (): void {
     $user = enrolledUser();
     $code = TwoFactor::currentCode((string) $user->twoFactorSecret());
 
-    expect(TwoFactor::verifyFor($user, $code))->toBeTrue()
-        ->and(TwoFactor::verifyFor($user->fresh(), $code))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt($code)->verified)->toBeTrue()
+        ->and(TwoFactor::for($user->fresh())->attempt($code)->verified)->toBeFalse();
     Event::assertDispatched(TwoFactorReplayDetected::class);
 
     Carbon::setTestNow();
@@ -96,8 +96,8 @@ it('rejects a concurrent replay across two stale reads of the same row', functio
     $a = TwoFactorUser::find($user->getKey());
     $b = TwoFactorUser::find($user->getKey());
 
-    expect(TwoFactor::verifyFor($a, $code))->toBeTrue()
-        ->and(TwoFactor::verifyFor($b, $code))->toBeFalse();
+    expect(TwoFactor::for($a)->attempt($code)->verified)->toBeTrue()
+        ->and(TwoFactor::for($b)->attempt($code)->verified)->toBeFalse();
 
     Carbon::setTestNow();
 });
@@ -107,10 +107,10 @@ it('rejects an earlier-timestep code after a later success', function (): void {
     $secret = (string) $user->twoFactorSecret();
 
     Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_600));
-    expect(TwoFactor::verifyFor($user, TwoFactor::currentCode($secret)))->toBeTrue();
+    expect(TwoFactor::for($user)->attempt(TwoFactor::currentCode($secret))->verified)->toBeTrue();
 
     Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_400));
-    expect(TwoFactor::verifyFor($user->fresh(), TwoFactor::currentCode($secret)))->toBeFalse();
+    expect(TwoFactor::for($user->fresh())->attempt(TwoFactor::currentCode($secret))->verified)->toBeFalse();
 
     Carbon::setTestNow();
 });
@@ -120,8 +120,8 @@ it('falls back to a single-use recovery code', function (): void {
     [$user, $setup] = enrolledUserWithSetup();
     $code = $setup->recoveryCodes[0];
 
-    expect(TwoFactor::verifyFor($user->fresh(), $code))->toBeTrue()
-        ->and(TwoFactor::verifyFor($user->fresh(), $code))->toBeFalse(); // single use
+    expect(TwoFactor::for($user->fresh())->attempt($code)->verified)->toBeTrue()
+        ->and(TwoFactor::for($user->fresh())->attempt($code)->verified)->toBeFalse(); // single use
     Event::assertDispatched(RecoveryCodeConsumed::class);
 
     expect($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(7);
@@ -133,10 +133,10 @@ it('does not double-spend a recovery code across a stale read', function (): voi
 
     // Request A holds a stale instance; request B consumes the code out of band.
     $stale = TwoFactorUser::find($user->getKey());
-    expect(TwoFactor::verifyFor(TwoFactorUser::find($user->getKey()), $code))->toBeTrue();
+    expect(TwoFactor::for(TwoFactorUser::find($user->getKey()))->attempt($code)->verified)->toBeTrue();
 
     // Request A carrying the same code must fail — consumption re-reads under lock.
-    expect(TwoFactor::verifyFor($stale, $code))->toBeFalse()
+    expect(TwoFactor::for($stale)->attempt($code)->verified)->toBeFalse()
         ->and($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(7);
 });
 
@@ -145,7 +145,7 @@ it('dispatches TwoFactorVerified on a successful totp verify', function (): void
     Event::fake();
     $user = enrolledUser();
 
-    TwoFactor::verifyFor($user, TwoFactor::currentCode((string) $user->twoFactorSecret()));
+    TwoFactor::for($user)->attempt(TwoFactor::currentCode((string) $user->twoFactorSecret()));
 
     Event::assertDispatched(
         TwoFactorVerified::class,
@@ -161,7 +161,7 @@ it('dispatches TwoFactorVerified with the recovery-code method on a recovery suc
     Event::fake();
     [$user, $setup] = enrolledUserWithSetup();
 
-    TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[0]);
+    TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[0]);
 
     Event::assertDispatched(
         TwoFactorVerified::class,
@@ -174,8 +174,8 @@ it('dispatches RecoveryCodeConsumed with the count left after each spend', funct
     Event::fake();
     [$user, $setup] = enrolledUserWithSetup();
 
-    TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[0]);
-    TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[1]);
+    TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[0]);
+    TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[1]);
 
     Event::assertDispatchedTimes(RecoveryCodeConsumed::class, 2);
     Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->remaining === 7);
@@ -187,14 +187,14 @@ it('counts down to zero as the last recovery code is spent', function (): void {
     config(['two-factor.recovery_codes.count' => 1]);
     [$user, $setup] = enrolledUserWithSetup();
 
-    expect(TwoFactor::attempt($user->fresh(), $setup->recoveryCodes[0]))
+    expect(TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[0]))
         ->verified->toBeTrue()
         ->remainingRecoveryCodes->toBe(0);
 
     Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->remaining === 0);
 
     // With the list exhausted the same code — and any other — now fails.
-    expect(TwoFactor::attempt($user->fresh(), $setup->recoveryCodes[0]))
+    expect(TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[0]))
         ->verified->toBeFalse()
         ->remainingRecoveryCodes->toBe(0);
 });
@@ -203,7 +203,7 @@ it('dispatches TwoFactorVerificationFailed on a genuine failure', function (): v
     Event::fake();
     $user = enrolledUser();
 
-    expect(TwoFactor::verifyFor($user, '000000'))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt('000000')->verified)->toBeFalse();
 
     Event::assertDispatched(TwoFactorVerificationFailed::class);
     Event::assertNotDispatched(TwoFactorVerified::class);
@@ -215,8 +215,8 @@ it('does not dispatch verification events on a replay', function (): void {
     $user = enrolledUser();
     $code = TwoFactor::currentCode((string) $user->twoFactorSecret());
 
-    TwoFactor::verifyFor($user, $code);
-    TwoFactor::verifyFor($user->fresh(), $code);
+    TwoFactor::for($user)->attempt($code);
+    TwoFactor::for($user->fresh())->attempt($code);
 
     Event::assertDispatched(TwoFactorReplayDetected::class);
     Event::assertDispatchedTimes(TwoFactorVerified::class, 1);
@@ -229,7 +229,7 @@ it('does not dispatch verification events when the user has no secret', function
     Event::fake();
     $user = TwoFactorUser::factory()->create();
 
-    expect(TwoFactor::verifyFor($user, '123456'))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt('123456')->verified)->toBeFalse();
 
     Event::assertNotDispatched(TwoFactorVerified::class);
     Event::assertNotDispatched(TwoFactorVerificationFailed::class);
@@ -241,10 +241,10 @@ it('accepts recovery codes regardless of the totp replay guard', function (): vo
     $secret = (string) $user->fresh()->twoFactorSecret();
 
     // Burn a TOTP timestep first, advancing the replay guard.
-    TwoFactor::verifyFor($user->fresh(), TwoFactor::currentCode($secret));
+    TwoFactor::for($user->fresh())->attempt(TwoFactor::currentCode($secret));
 
     // A recovery code still works after the guard has recorded a timestep.
-    expect(TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[1]))->toBeTrue();
+    expect(TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[1])->verified)->toBeTrue();
 
     Carbon::setTestNow();
 });
@@ -256,11 +256,11 @@ it('locks out and throws after the configured failed attempts', function (): voi
 
     // Three genuine failures exhaust the budget.
     foreach (range(1, 3) as $ignored) {
-        expect(TwoFactor::verifyFor($user->fresh(), '000000'))->toBeFalse();
+        expect(TwoFactor::for($user->fresh())->attempt('000000')->verified)->toBeFalse();
     }
 
     // The next attempt is locked out before any verification work.
-    expect(fn (): bool => TwoFactor::verifyFor($user->fresh(), '000000'))
+    expect(fn (): bool => TwoFactor::for($user->fresh())->attempt('000000')->verified)
         ->toThrow(TwoFactorRateLimitedException::class);
     Event::assertDispatched(TwoFactorRateLimited::class);
 });
@@ -272,12 +272,12 @@ it('clears the attempt counter on a successful verify', function (): void {
     $secret = (string) $user->twoFactorSecret();
 
     // Two failures, then a success resets the budget.
-    TwoFactor::verifyFor($user->fresh(), '000000');
-    TwoFactor::verifyFor($user->fresh(), '000000');
-    expect(TwoFactor::verifyFor($user->fresh(), TwoFactor::currentCode($secret)))->toBeTrue();
+    TwoFactor::for($user->fresh())->attempt('000000');
+    TwoFactor::for($user->fresh())->attempt('000000');
+    expect(TwoFactor::for($user->fresh())->attempt(TwoFactor::currentCode($secret))->verified)->toBeTrue();
 
     // A fresh run of failures does not immediately lock out.
-    expect(TwoFactor::verifyFor($user->fresh(), '000000'))->toBeFalse();
+    expect(TwoFactor::for($user->fresh())->attempt('000000')->verified)->toBeFalse();
 
     Carbon::setTestNow();
 });
@@ -287,6 +287,6 @@ it('never rate-limits when the limiter is disabled', function (): void {
     $user = enrolledUser();
 
     foreach (range(1, 20) as $ignored) {
-        expect(TwoFactor::verifyFor($user->fresh(), '000000'))->toBeFalse();
+        expect(TwoFactor::for($user->fresh())->attempt('000000')->verified)->toBeFalse();
     }
 });

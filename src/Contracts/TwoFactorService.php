@@ -5,17 +5,24 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Contracts;
 
 use Illuminate\Database\Eloquent\Model;
-use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
-use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
+use RoundlyConsulting\TwoFactor\TwoFactorManager;
+use RoundlyConsulting\TwoFactor\UserTwoFactor;
 use SensitiveParameter;
 
 /**
- * The package's public verification surface. Extracted so the concrete service
- * (which stays final) can be substituted by the shipped FakeTwoFactor in tests
- * via TwoFactor::fake(); the real service and every Action bind this contract.
+ * The package's public API and the `TwoFactor` facade root: the stateless TOTP
+ * primitives, plus `for($user)` for everything that reads or changes one user's
+ * two-factor state. Inject this contract — `TwoFactor::fake()` swaps the
+ * container binding, so constructor-injected code sees the fake too. The real
+ * implementation is {@see TwoFactorManager}.
  */
 interface TwoFactorService
 {
+    /**
+     * One user's two-factor: start, confirm, attempt, status, recovery codes, disable.
+     */
+    public function for(TwoFactorAuthenticatable&Model $user): UserTwoFactor;
+
     public function generateSecret(?int $length = null): string;
 
     public function currentCode(#[SensitiveParameter] string $secret, ?int $timestamp = null): string;
@@ -28,22 +35,6 @@ interface TwoFactorService
         #[SensitiveParameter] string $code,
         ?int $window = null,
     ): int|false;
-
-    /**
-     * Attempt a login-challenge code: TOTP with replay protection, then a
-     * single-use recovery-code fallback. Reports which factor passed and how
-     * many recovery codes remain.
-     *
-     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
-     */
-    public function attempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult;
-
-    /**
-     * Whether a login-challenge code passes — attempt()->verified.
-     *
-     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
-     */
-    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool;
 
     public function provisioningUri(
         #[SensitiveParameter] string $secret,

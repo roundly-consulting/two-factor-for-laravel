@@ -24,7 +24,7 @@ return [
         'storage' => RecoveryCodeStorage::Hashed->value, // 'hashed' (default) | 'encrypted'
     ],
 
-    // Built-in brute-force limiter for verifyFor(), keyed per user. Set to null
+    // Built-in brute-force limiter for attempt(), keyed per user. Set to null
     // to disable it and rely on your own throttle middleware instead.
     'attempts' => [
         'max' => 5,                               // failed attempts before lockout

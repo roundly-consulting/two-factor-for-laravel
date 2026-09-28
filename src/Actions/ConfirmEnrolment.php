@@ -21,12 +21,12 @@ use SensitiveParameter;
  * user is refused with TwoFactorNotPendingException before the code is looked
  * at, so a clean return always means "this code just enabled two-factor".
  */
-final class ConfirmEnrolment
+final readonly class ConfirmEnrolment
 {
     public function __construct(
-        private readonly TwoFactorService $twoFactor,
-        private readonly ReplayGuard $replayGuard,
-        private readonly ?Dispatcher $events = null,
+        private TwoFactorService $twoFactor,
+        private ReplayGuard $replayGuard,
+        private ?Dispatcher $events = null,
     ) {}
 
     /**

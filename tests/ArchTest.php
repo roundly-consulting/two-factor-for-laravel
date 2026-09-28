@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use RoundlyConsulting\Testing\Arch\ArchPresets;
+use RoundlyConsulting\TwoFactor\UserRecoveryCodes;
+use RoundlyConsulting\TwoFactor\UserTwoFactor;
 
 /**
  * The seven presets replace this package's hand-written generic rules. The rules that
@@ -12,13 +14,21 @@ use RoundlyConsulting\Testing\Arch\ArchPresets;
 ArchPresets::strictTypes('RoundlyConsulting\TwoFactor');
 
 /**
- * Nothing here is a documented extension point: two-factor swaps no model (it works on
- * the *host's* user model, which the host already owns) and ships no config key inviting
- * a subclass. So `finalByDefault` runs with no exemptions and `swappableModelsAreNotFinal`
- * is not adopted — there is no swappable model to pin, and an empty map would assert
- * nothing while looking like a guard.
+ * Two-factor swaps no model (it works on the *host's* user model, which the host already
+ * owns) and ships no config key inviting a subclass, so `swappableModelsAreNotFinal` is not
+ * adopted — there is no swappable model to pin.
+ *
+ * The two exemptions are the `TwoFactor::for($user)` handles: `TwoFactor::fake()` returns
+ * recording subclasses of them (`Testing\Recording*`), so every enrolment write through
+ * the facade or the model verbs is seen by the fake.
  */
-ArchPresets::finalByDefault('RoundlyConsulting\TwoFactor');
+ArchPresets::finalByDefault('RoundlyConsulting\TwoFactor', [UserTwoFactor::class, UserRecoveryCodes::class]);
+
+/**
+ * The `HasTwoFactorAuthentication` verbs go through `TwoFactor::for($this)`, never an
+ * action, so the fake sees every call.
+ */
+ArchPresets::modelsGoThroughTheFacade('RoundlyConsulting\TwoFactor');
 
 /**
  * Every cryptographic primitive comes from crypto-for-laravel — never a third-party OTP

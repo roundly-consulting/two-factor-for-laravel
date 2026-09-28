@@ -12,10 +12,10 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorDisabled;
 /**
  * Clears every two-factor column, fully disabling 2FA for the user.
  */
-final class DisableTwoFactor
+final readonly class DisableTwoFactor
 {
     public function __construct(
-        private readonly ?Dispatcher $events = null,
+        private ?Dispatcher $events = null,
     ) {}
 
     public function execute(TwoFactorAuthenticatable&Model $user): void

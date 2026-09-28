@@ -63,12 +63,12 @@ it('takes the lock even when the candidate code matches nothing', function (): v
         }
     });
 
-    expect(TwoFactor::verifyFor($user, 'AAAAA-BBBBB'))->toBeFalse()
+    expect(TwoFactor::for($user)->attempt('AAAAA-BBBBB')->verified)->toBeFalse()
         // The consume transaction opened, so the miss was decided under the lock.
         ->and($depths)->not->toBeEmpty()
         ->and(max($depths))->toBe(1);
 
-    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeTrue();
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0])->verified)->toBeTrue();
 });
 
 it('never lets two racing verifications spend the same recovery code twice', function (): void {
@@ -88,8 +88,8 @@ it('never lets two racing verifications spend the same recovery code twice', fun
     expect($requestA->twoFactorRecoveryCodes())->toHaveCount(8)
         ->and($requestB->twoFactorRecoveryCodes())->toHaveCount(8);
 
-    expect(TwoFactor::verifyFor($requestA, $code))->toBeTrue()
-        ->and(TwoFactor::verifyFor($requestB, $code))->toBeFalse();
+    expect(TwoFactor::for($requestA)->attempt($code)->verified)->toBeTrue()
+        ->and(TwoFactor::for($requestB)->attempt($code)->verified)->toBeFalse();
 
     // Exactly one spend: the second request re-read the list under the lock and
     // found the code already gone.
@@ -116,7 +116,7 @@ it('does not clobber a write that lands between the locked read and the recovery
         TwoFactorUser::query()->whereKey($user->getKey())->toBase()->update(['name' => 'raced']);
     });
 
-    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeTrue()
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0])->verified)->toBeTrue()
         ->and($raced)->toBeTrue();
 
     $fresh = $user->fresh();
@@ -134,7 +134,7 @@ it('fails closed when the user row disappears before the locked read', function 
 
     // A vanished row is a failed verification, not an unhandled exception in the
     // middle of someone's login.
-    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0])->verified)->toBeFalse();
 });
 
 it('spends a recovery code without bumping the host row timestamps', function (): void {
@@ -144,7 +144,7 @@ it('spends a recovery code without bumping the host row timestamps', function ()
 
     Carbon::setTestNow(now()->addHour());
 
-    expect(TwoFactor::verifyFor($user, $setup->recoveryCodes[0]))->toBeTrue();
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0])->verified)->toBeTrue();
 
     // The write is scoped to the recovery-code column: consuming a code is not a
     // profile update, and must not race the host's own updated_at bookkeeping.
@@ -164,12 +164,12 @@ it('never loses a failed attempt that races with another request', function (): 
     RateLimiter::hit($key, 60);
 
     // ...and ours must fold into it, not overwrite a value read before it landed.
-    expect(TwoFactor::verifyFor($user, '000000'))->toBeFalse()
+    expect(TwoFactor::for($user)->attempt('000000')->verified)->toBeFalse()
         ->and(RateLimiter::attempts($key))->toBe(2);
 
     RateLimiter::hit($key, 60);
 
-    expect(TwoFactor::verifyFor($user, '000000'))->toBeFalse()
+    expect(TwoFactor::for($user)->attempt('000000')->verified)->toBeFalse()
         ->and(RateLimiter::attempts($key))->toBe(4);
 });
 
@@ -180,14 +180,14 @@ it('locks the challenge out at the configured maximum even under interleaved fai
     $key = 'two-factor:'.$user::class.':'.$user->getKey();
 
     // Two of our own failures interleaved with one from a competing request.
-    expect(TwoFactor::verifyFor($user, '000000'))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt('000000')->verified)->toBeFalse();
     RateLimiter::hit($key, 60);
-    expect(TwoFactor::verifyFor($user, '000000'))->toBeFalse();
+    expect(TwoFactor::for($user)->attempt('000000')->verified)->toBeFalse();
 
     expect(RateLimiter::attempts($key))->toBe(3);
 
     // The competing failure counts: the attacker is locked out at 3, not 4.
-    TwoFactor::verifyFor($user, '000000');
+    TwoFactor::for($user)->attempt('000000');
 })->throws(TwoFactorRateLimitedException::class);
 
 it('lets only one of two racing submissions of the same totp code through', function (): void {
@@ -203,8 +203,8 @@ it('lets only one of two racing submissions of the same totp code through', func
 
     // Both hold a stale (null) last-used timestep; the guard's conditional
     // UPDATE is the compare-and-set, so exactly one claim affects a row.
-    expect(TwoFactor::verifyFor($requestA, $code))->toBeTrue()
-        ->and(TwoFactor::verifyFor($requestB, $code))->toBeFalse();
+    expect(TwoFactor::for($requestA)->attempt($code)->verified)->toBeTrue()
+        ->and(TwoFactor::for($requestB)->attempt($code)->verified)->toBeFalse();
 
     Event::assertDispatchedTimes(TwoFactorReplayDetected::class, 1);
 });
@@ -217,7 +217,7 @@ it('reports the locked row count, not the stale instance, to a racing attempt', 
     /** @var TwoFactorUser $requestB */
     $requestB = TwoFactorUser::query()->findOrFail($user->getKey());
 
-    expect(TwoFactor::attempt($requestA, $setup->recoveryCodes[0]))
+    expect(TwoFactor::for($requestA)->attempt($setup->recoveryCodes[0]))
         ->verified->toBeTrue()
         ->method->toBe(TwoFactorMethod::RecoveryCode)
         ->remainingRecoveryCodes->toBe(7);
@@ -226,11 +226,11 @@ it('reports the locked row count, not the stale instance, to a racing attempt', 
     // row it re-read under the lock, where A's spend has already landed.
     expect($requestB->twoFactorRecoveryCodes())->toHaveCount(8);
 
-    expect(TwoFactor::attempt($requestB, $setup->recoveryCodes[0]))
+    expect(TwoFactor::for($requestB)->attempt($setup->recoveryCodes[0]))
         ->verified->toBeFalse()
         ->remainingRecoveryCodes->toBe(7);
 
-    expect(TwoFactor::attempt($requestB, $setup->recoveryCodes[1]))
+    expect(TwoFactor::for($requestB)->attempt($setup->recoveryCodes[1]))
         ->verified->toBeTrue()
         ->remainingRecoveryCodes->toBe(6);
 });
@@ -244,11 +244,11 @@ it('reports the losing racer of a totp code as replayed', function (): void {
     /** @var TwoFactorUser $requestB */
     $requestB = TwoFactorUser::query()->findOrFail($user->getKey());
 
-    expect(TwoFactor::attempt($requestA, $code))
+    expect(TwoFactor::for($requestA)->attempt($code))
         ->verified->toBeTrue()
         ->method->toBe(TwoFactorMethod::Totp);
 
-    expect(TwoFactor::attempt($requestB, $code))
+    expect(TwoFactor::for($requestB)->attempt($code))
         ->verified->toBeFalse()
         ->replayed->toBeTrue();
 });
@@ -258,7 +258,7 @@ it('reports zero remaining when the row vanished before the locked read', functi
 
     TwoFactorUser::query()->whereKey($user->getKey())->delete();
 
-    expect(TwoFactor::attempt($user, $setup->recoveryCodes[0]))
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0]))
         ->verified->toBeFalse()
         ->remainingRecoveryCodes->toBe(0);
 });

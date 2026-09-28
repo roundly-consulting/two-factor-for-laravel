@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor;
 
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Schema\Blueprint;
 use RoundlyConsulting\PackageToolkit\Package;
@@ -43,12 +42,10 @@ final class TwoFactorServiceProvider extends PackageServiceProvider
 
         $this->app->singleton(ReplayGuard::class, fn (Application $app): ReplayGuard => $this->resolveReplayGuard($app));
 
-        $this->app->singleton(TwoFactorService::class, fn (Application $app): TwoFactor => new TwoFactor(
-            $app->make(ReplayGuard::class),
-            $this->dispatcher($app),
-        ));
-
-        $this->app->alias(TwoFactorService::class, TwoFactor::class);
+        // Bound under the contract only. No alias to TwoFactorManager: the fake
+        // implements the contract, so an alias would hand a TwoFactorManager
+        // type-hint the fake under TwoFactor::fake() — a TypeError.
+        $this->app->singleton(TwoFactorService::class, static fn (Application $app): TwoFactorManager => new TwoFactorManager($app));
     }
 
     private function resolveReplayGuard(Application $app): ReplayGuard
@@ -75,11 +72,6 @@ final class TwoFactorServiceProvider extends PackageServiceProvider
             /** @var Blueprint $this */
             TwoFactorColumns::drop($this);
         });
-    }
-
-    private function dispatcher(Application $app): ?Dispatcher
-    {
-        return $app->bound(Dispatcher::class) ? $app->make(Dispatcher::class) : null;
     }
 
     private function nullableString(mixed $value): ?string

@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Exceptions;
 
 /**
- * Thrown by verifyFor() when the built-in brute-force limiter has locked a user's
- * two-factor challenge. Hosts can catch this to render a "try again later" state.
+ * Thrown by `TwoFactor::for($user)->attempt()` when the built-in brute-force
+ * limiter has locked a user's two-factor challenge. Hosts can catch this to
+ * render a "try again later" state.
  */
 final class TwoFactorRateLimitedException extends TwoFactorException
 {

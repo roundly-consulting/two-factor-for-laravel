@@ -152,7 +152,7 @@ it('rejects the confirmation code replayed at first login', function (): void {
     app(ConfirmEnrolment::class)->execute($user->fresh(), $code);
 
     // The exact code used to confirm cannot double as the first login code.
-    expect(TwoFactor::verifyFor($user->fresh(), $code))->toBeFalse();
+    expect(TwoFactor::for($user->fresh())->attempt($code)->verified)->toBeFalse();
     Event::assertDispatched(TwoFactorReplayDetected::class);
 
     Carbon::setTestNow();
@@ -167,7 +167,7 @@ it('accepts a later-step code after confirmation', function (): void {
 
     // A code at the next timestep still verifies.
     Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_060));
-    expect(TwoFactor::verifyFor($user->fresh(), TwoFactor::currentCode($setup->secret)))->toBeTrue();
+    expect(TwoFactor::for($user->fresh())->attempt(TwoFactor::currentCode($setup->secret))->verified)->toBeTrue();
 
     Carbon::setTestNow();
 });

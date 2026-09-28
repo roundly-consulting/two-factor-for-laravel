@@ -38,7 +38,7 @@ it('confirms, verifies and disables through the trait verbs', function (): void 
     Carbon::setTestNow();
 });
 
-it('matches the facade verifyFor result', function (): void {
+it('reduces the facade attempt to a bool', function (): void {
     $fake = TwoFactor::fake()->accept();
     $user = TwoFactorUser::factory()->create();
 
@@ -90,7 +90,7 @@ it('tracks the remaining recovery-code count', function (): void {
 
     expect($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(8);
 
-    TwoFactor::verifyFor($user->fresh(), $setup->recoveryCodes[0]);
+    TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[0]);
 
     expect($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(7);
 });

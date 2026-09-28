@@ -200,7 +200,7 @@ it('attempts a totp code and reports it with the recovery codes untouched', func
     Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
     [$user, $setup] = attemptableUser();
 
-    $result = TwoFactor::attempt($user, TwoFactor::currentCode($setup->secret));
+    $result = TwoFactor::for($user)->attempt(TwoFactor::currentCode($setup->secret));
 
     expect($result)->toBeInstanceOf(VerificationResult::class)
         ->verified->toBeTrue()
@@ -214,13 +214,13 @@ it('attempts a totp code and reports it with the recovery codes untouched', func
 it('attempts a recovery code and reports one fewer remaining', function (): void {
     [$user, $setup] = attemptableUser();
 
-    expect(TwoFactor::attempt($user, $setup->recoveryCodes[0]))
+    expect(TwoFactor::for($user)->attempt($setup->recoveryCodes[0]))
         ->verified->toBeTrue()
         ->method->toBe(TwoFactorMethod::RecoveryCode)
         ->remainingRecoveryCodes->toBe(7)
         ->replayed->toBeFalse();
 
-    expect(TwoFactor::attempt($user->fresh(), $setup->recoveryCodes[1]))
+    expect(TwoFactor::for($user->fresh())->attempt($setup->recoveryCodes[1]))
         ->remainingRecoveryCodes->toBe(6);
 });
 
@@ -229,9 +229,9 @@ it('reports a replayed timestep as a failure flagged replayed', function (): voi
     [$user, $setup] = attemptableUser();
     $code = TwoFactor::currentCode($setup->secret);
 
-    expect(TwoFactor::attempt($user, $code)->verified)->toBeTrue();
+    expect(TwoFactor::for($user)->attempt($code)->verified)->toBeTrue();
 
-    expect(TwoFactor::attempt($user->fresh(), $code))
+    expect(TwoFactor::for($user->fresh())->attempt($code))
         ->verified->toBeFalse()
         ->method->toBeNull()
         ->replayed->toBeTrue()
@@ -243,7 +243,7 @@ it('reports a replayed timestep as a failure flagged replayed', function (): voi
 it('reports a wrong code as a plain failure', function (): void {
     [$user] = attemptableUser();
 
-    expect(TwoFactor::attempt($user, '000000'))
+    expect(TwoFactor::for($user)->attempt('000000'))
         ->verified->toBeFalse()
         ->method->toBeNull()
         ->replayed->toBeFalse()
@@ -255,7 +255,7 @@ it('fails a pending enrolment even with its valid code', function (): void {
     $user = TwoFactorUser::factory()->create();
     $setup = app(StartEnrolment::class)->execute($user);
 
-    expect(TwoFactor::attempt($user->fresh(), TwoFactor::currentCode($setup->secret)))
+    expect(TwoFactor::for($user->fresh())->attempt(TwoFactor::currentCode($setup->secret)))
         ->verified->toBeFalse()
         ->method->toBeNull()
         ->remainingRecoveryCodes->toBe(8);
@@ -264,7 +264,7 @@ it('fails a pending enrolment even with its valid code', function (): void {
 });
 
 it('fails a user with no enrolment at all', function (): void {
-    expect(TwoFactor::attempt(TwoFactorUser::factory()->create(), '123456'))
+    expect(TwoFactor::for(TwoFactorUser::factory()->create())->attempt('123456'))
         ->verified->toBeFalse()
         ->remainingRecoveryCodes->toBe(0);
 });
@@ -273,13 +273,13 @@ it('throws once the per-user limiter is exhausted', function (): void {
     config(['two-factor.attempts' => ['max' => 2, 'decay' => 60]]);
     [$user] = attemptableUser();
 
-    TwoFactor::attempt($user, '000000');
-    TwoFactor::attempt($user, '000000');
+    TwoFactor::for($user)->attempt('000000');
+    TwoFactor::for($user)->attempt('000000');
 
-    TwoFactor::attempt($user, '000000');
+    TwoFactor::for($user)->attempt('000000');
 })->throws(TwoFactorRateLimitedException::class);
 
-it('agrees with verifyFor for every outcome', function (string $kind, bool $expected): void {
+it('agrees with the model verb for every outcome', function (string $kind, bool $expected): void {
     Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
 
     // Two identical users so each call sees the same state rather than the
@@ -295,8 +295,8 @@ it('agrees with verifyFor for every outcome', function (string $kind, bool $expe
     };
 
     // Pinned to the expected outcome too, so two equally broken answers cannot agree.
-    expect(TwoFactor::attempt($a, $code($setupA))->verified)->toBe($expected)
-        ->and(TwoFactor::verifyFor($b, $code($setupB)))->toBe($expected);
+    expect(TwoFactor::for($a)->attempt($code($setupA))->verified)->toBe($expected)
+        ->and($b->verifyTwoFactorCode($code($setupB)))->toBe($expected);
 
     Carbon::setTestNow();
 })->with([

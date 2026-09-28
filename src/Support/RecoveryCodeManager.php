@@ -16,6 +16,8 @@ use SensitiveParameter;
  * In encrypted mode the stored value is the plaintext code (kept encrypted at
  * rest by the model cast) and matched in constant time. In hashed mode the
  * stored value is a one-way hash matched with Hash::check.
+ *
+ * @internal a building block of the enrolment and attempt actions
  */
 final readonly class RecoveryCodeManager
 {

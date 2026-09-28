@@ -2,16 +2,11 @@
 
 declare(strict_types=1);
 
-namespace RoundlyConsulting\TwoFactor;
+namespace RoundlyConsulting\TwoFactor\Actions;
 
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\RateLimiter;
-use RoundlyConsulting\Crypto\Codec\InvalidEncodingException;
-use RoundlyConsulting\Crypto\Otp\InvalidOtpParameterException;
-use RoundlyConsulting\Crypto\Otp\ProvisioningUri;
-use RoundlyConsulting\Crypto\Otp\Totp;
-use RoundlyConsulting\Crypto\Random\Secret;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
@@ -24,87 +19,29 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
-use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
-use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 use SensitiveParameter;
 
 /**
- * The package's public entry point: TOTP primitives plus the replay-safe,
- * recovery-aware attempt()/verifyFor() used during a login challenge.
- *
- * The OTP maths, the base32 codec and the CSPRNG all come from
- * crypto-for-laravel. This class is the boundary: it builds those primitives
- * from this package's own config and translates every crypto failure back into
- * the two-factor exception a host already catches.
+ * Attempts a login-challenge code for a user: TOTP with replay protection, then
+ * a single-use recovery-code fallback, all behind the per-user brute-force
+ * limiter. Reports which factor passed and how many recovery codes remain, so a
+ * caller never has to listen to its own call.
  */
-final class TwoFactor implements TwoFactorService
+final readonly class AttemptTwoFactorCode
 {
     public function __construct(
-        private readonly ReplayGuard $replayGuard,
-        private readonly ?Dispatcher $events = null,
+        private TwoFactorService $twoFactor,
+        private ReplayGuard $replayGuard,
+        private ?Dispatcher $events = null,
     ) {}
 
     /**
-     * A fresh base32 secret backed by the CSPRNG.
-     *
-     * @throws InvalidTwoFactorConfigException when the length is out of range
-     */
-    public function generateSecret(?int $length = null): string
-    {
-        $length ??= ConfigGuard::secretLength();
-
-        // Bound an explicit caller length by the same rule as the configured one,
-        // so no path can mint a secret below the package's entropy floor.
-        return Secret::base32(ConfigGuard::assertSecretLength($length));
-    }
-
-    /**
-     * @throws InvalidBase32Exception when the secret is not valid base32
-     */
-    public function currentCode(#[SensitiveParameter] string $secret, ?int $timestamp = null): string
-    {
-        try {
-            return $this->totp()->codeAt($secret, $timestamp);
-        } catch (InvalidEncodingException $e) {
-            throw InvalidBase32Exception::fromCodec($e);
-        }
-    }
-
-    /**
-     * @return int|false the matched timestep, or false
-     *
-     * @throws InvalidBase32Exception when the secret is not valid base32
-     * @throws InvalidTwoFactorConfigException when the window is out of range
-     */
-    public function verify(
-        #[SensitiveParameter] string $secret,
-        #[SensitiveParameter] string $code,
-        ?int $window = null,
-    ): int|false {
-        $window ??= ConfigGuard::window();
-
-        try {
-            return $this->totp()->verify($secret, $code, $window);
-        } catch (InvalidEncodingException $e) {
-            throw InvalidBase32Exception::fromCodec($e);
-        } catch (InvalidOtpParameterException) {
-            // The only parameter the caller can still push out of range here is
-            // the explicit window; digits/period came through ConfigGuard.
-            throw InvalidTwoFactorConfigException::window($window);
-        }
-    }
-
-    /**
-     * Attempt a code for a user: TOTP with replay protection, then a single-use
-     * recovery-code fallback. Reports which factor passed and how many recovery
-     * codes remain, so a caller never has to listen to its own call.
-     *
      * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
      */
-    public function attempt(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
+    public function execute(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
         // Only a fully confirmed enrolment can satisfy a login challenge; a
         // secret that was persisted but never confirmed is not a working second
@@ -129,7 +66,7 @@ final class TwoFactor implements TwoFactorService
             throw TwoFactorRateLimitedException::make($seconds);
         }
 
-        $timestep = $this->verify($secret, $code);
+        $timestep = $this->twoFactor->verify($secret, $code);
 
         if ($timestep !== false) {
             if (! $this->replayGuard->claim($user, $timestep)) {
@@ -161,48 +98,15 @@ final class TwoFactor implements TwoFactorService
     }
 
     /**
-     * Verify a code for a user — {@see attempt()} reduced to whether it passed.
-     *
-     * @throws TwoFactorRateLimitedException when the per-user limiter is exhausted
-     */
-    public function verifyFor(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): bool
-    {
-        return $this->attempt($user, $code)->verified;
-    }
-
-    public function provisioningUri(
-        #[SensitiveParameter] string $secret,
-        string $label,
-        ?string $issuer = null,
-    ): string {
-        return ProvisioningUri::totp(
-            $secret,
-            $label,
-            ConfigGuard::issuer($issuer),
-            ConfigGuard::algorithm(),
-            ConfigGuard::digits(),
-            ConfigGuard::period(),
-        );
-    }
-
-    /**
-     * @return list<string>
-     */
-    public function generateRecoveryCodes(?int $count = null): array
-    {
-        $count ??= (int) config('two-factor.recovery_codes.count', 8);
-
-        return $this->recoveryCodes()->generate($count);
-    }
-
-    /**
      * The recovery-code fallback. The remaining count comes from the row read
      * under the lock, so it is the true count even when the caller's instance
      * is stale.
      */
     private function consumeRecoveryCode(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
-        $manager = $this->recoveryCodes();
+        $manager = new RecoveryCodeManager(
+            RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
+        );
         $column = (string) config('two-factor.columns.recovery_codes');
 
         // Consume under a transaction with a locked, fresh re-read of the row so
@@ -265,25 +169,5 @@ final class TwoFactor implements TwoFactorService
     private function rateLimiterKey(TwoFactorAuthenticatable&Model $user): string
     {
         return 'two-factor:'.$user::class.':'.$user->getKey();
-    }
-
-    /**
-     * The OTP primitive, parameterised from this package's own config. Crypto is
-     * zero-config: every knob is passed in here, bounds-checked first.
-     */
-    private function totp(): Totp
-    {
-        return new Totp(
-            ConfigGuard::algorithm(),
-            ConfigGuard::digits(),
-            ConfigGuard::period(),
-        );
-    }
-
-    private function recoveryCodes(): RecoveryCodeManager
-    {
-        return new RecoveryCodeManager(
-            RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
-        );
     }
 }

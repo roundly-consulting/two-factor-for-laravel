@@ -25,10 +25,14 @@ Initial public release.
   code (server-side with `qr-for-laravel`, or in your front end).
 - Login verification with `TwoFactor::for($user)->attempt()`, returning a `VerificationResult`
   that says whether a TOTP or a recovery code was used.
-- Single-use recovery codes, hashed at rest by default (encrypted storage available).
+- Single-use recovery codes, hashed at rest by default (encrypted storage available), matched
+  the way people type them: case, surrounding whitespace and the dash don't matter.
 - Encrypted TOTP secrets, automatically hidden from model serialization.
 - Constant-time comparison and atomic replay protection, so a code can never be used twice.
-- A built-in per-user brute-force limiter (`two-factor.attempts`).
+- A built-in per-user brute-force limiter (`two-factor.attempts`) that counts each attempt
+  atomically before verifying it, so a burst of parallel guesses can't exceed the limit.
+- A publishable migration for the host's users table, with a `down()` so rollbacks work.
+- A documented one-off migration for apps moving from Laravel Fortify's stored format.
 - Events for enrolment, confirmation, disabling, recovery codes, verification success and
   failure, replays and rate limiting.
 - `TwoFactor` facade primitives (`generateSecret()`, `currentCode()`, `verify()`,

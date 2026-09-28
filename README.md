@@ -32,7 +32,9 @@ library ships in this package.
 - One API three ways: the `TwoFactor` facade (`TwoFactor::for($user)->start()/confirm()/attempt()/status()`),
   the injectable `TwoFactorService` contract, or the action classes — plus a user-model trait,
   events and a recording `TwoFactor::fake()`.
-- **Standards-compatible** — existing TOTP secrets from standard authenticator apps keep verifying unchanged.
+- **Standards-compatible** — RFC 6238 secrets from other libraries keep producing the same codes,
+  so nobody re-enrols (the stored columns are re-encrypted once — see
+  [Migrating from another TOTP library](#migrating-from-another-totp-library)).
 
 ## Requirements
 
@@ -81,7 +83,8 @@ php artisan migrate
 ```
 
 Re-publishing overwrites the file it published to last time, so you never end up with two
-copies of the same migration.
+copies of the same migration. The migration has a `down()` that drops the four columns again,
+so `migrate:rollback` and `migrate:refresh` work as usual.
 
 The migration adds four nullable columns to your `users` table — or to the table named by
 `two-factor.table` (`TWO_FACTOR_TABLE`), read when the migration runs. If you write your own
@@ -130,7 +133,7 @@ return [
     'digits' => 6,                // 6–8
     'period' => 30,               // 15–120 seconds per timestep
     'window' => 1,                // 0–2: accept ±N timesteps of drift
-    'secret_length' => 32,        // base32 chars (≥16); 32 = 160 bits
+    'secret_length' => 32,        // base32 chars (≥16); 32 = 160 bits; 1/3/6 (mod 8) round up by one
 
     // Provisioning (otpauth:// URI). issuer falls back to config('app.name') at runtime.
     'issuer' => env('TWO_FACTOR_ISSUER'),
@@ -174,7 +177,7 @@ return [
 | `digits` | int | `6` | Code length (6–8) |
 | `period` | int | `30` | Seconds per timestep (15–120) |
 | `window` | int | `1` | Accepted drift in ± timesteps (0–2) |
-| `secret_length` | int | `32` | Base32 secret length (≥16); 32 chars = 160 bits |
+| `secret_length` | int | `32` | Base32 secret length (16–4096); 32 chars = 160 bits. A length no base32 string can have (1, 3 or 6 mod 8, e.g. 17 or 30) is rounded **up** one character, so the secret always decodes |
 | `issuer` | string\|null | `env('TWO_FACTOR_ISSUER')` | Provisioning issuer; null or blank falls back to `config('app.name')` |
 | `recovery_codes.count` | int | `8` | Recovery codes generated per enrolment |
 | `recovery_codes.storage` | string | `hashed` | `hashed` (one-way, default) or `encrypted` (reversible, display-again) |
@@ -332,12 +335,18 @@ recovery code (consuming it). A code whose timestep was already used is rejected
 code for a user whose enrolment is still **pending** (`confirmed_at` unset) — only a confirmed
 second factor can satisfy a challenge.
 
-**Built-in brute-force limiter.** `attempt()` throttles per user out of the box: after
-`attempts.max` (default 5) failed attempts within `attempts.decay` seconds (default 60) it
-throws `TwoFactorRateLimitedException` before doing any verification work, and dispatches a
-`TwoFactorRateLimited` event. A successful verification clears the counter. Set
-`config('two-factor.attempts')` to `null` to disable it entirely and use your own `throttle:`
-middleware instead.
+Recovery codes are matched the way people type them: case, surrounding whitespace and the dash
+(or a space in its place) don't matter, and a typed letter `O` reads as the zero it was mistaken
+for (codes never contain an `O`). So `ywnly 0j5bk` spends `YWNLY-0J5BK` — once. An imported code
+of any other shape must match exactly.
+
+**Built-in brute-force limiter.** `attempt()` throttles per user out of the box. Every attempt
+is counted **before** it is verified, in one atomic increment, so even a burst of parallel
+guesses gets at most `attempts.max` (default 5) verifications per `attempts.decay` seconds
+(default 60). Past that, it throws `TwoFactorRateLimitedException` without doing any
+verification work and dispatches a `TwoFactorRateLimited` event. A successful verification
+clears the counter; a failed or replayed one stays counted. Set `config('two-factor.attempts')`
+to `null` to disable it entirely and use your own `throttle:` middleware instead.
 
 ### Status
 
@@ -447,10 +456,12 @@ $setup = app(StartEnrolment::class)->execute($user, issuer: 'Acme');
 - **Atomic single-use recovery codes** — consumption re-reads the row under a transaction lock
   before removing the matched code, so a code phished once cannot be raced through twice.
 - **Built-in brute-force limiter** — `attempt()` ships a per-user throttle on by default
-  (`attempts.max` / `attempts.decay`), throwing `TwoFactorRateLimitedException` on lockout. Set
-  `attempts` to `null` to opt out and run your own `throttle:` middleware.
+  (`attempts.max` / `attempts.decay`), throwing `TwoFactorRateLimitedException` on lockout. Each
+  attempt is counted atomically before it is verified, so parallel requests can't slip extra
+  guesses past the limit. Set `attempts` to `null` to opt out and run your own `throttle:`
+  middleware.
 - **Bounds-checked config** — `digits` (6–8), `period` (15–120), `window` (0–2) and
-  `secret_length` (≥16) are validated at runtime; a misconfiguration throws
+  `secret_length` (16–4096) are validated at runtime; a misconfiguration throws
   `InvalidTwoFactorConfigException` instead of silently degrading to weak 2FA.
 - `#[SensitiveParameter]` is applied to every secret/code argument so they never leak into
   stack traces; the package never logs secrets or codes.
@@ -500,14 +511,90 @@ Event::listen(function (TwoFactorVerificationFailed $event): void {
 
 ## Migrating from another TOTP library
 
-This package is **byte-compatible** with the standard TOTP profile (SHA1, 6 digits, 30s) used
-by common authenticator apps and libraries. Existing secrets keep verifying under the same
-`APP_KEY` with no data migration — just add the `two_factor_last_used_timestep` column (via the
-macro/migration) to enable replay protection. If you are importing existing plaintext/encrypted
-recovery codes, set `recovery_codes.storage` to `encrypted` so they still match (the default is
-`hashed`).
-Compatibility is proven by committed static parity fixtures; no third-party TOTP library is a
-dependency of this package.
+TOTP itself is portable. This package follows the standard profile (SHA1, 6 digits, 30s) that
+authenticator apps use, so a base32 secret minted by any RFC 6238 library keeps generating the
+same codes: your users keep their authenticator entries and never re-enrol. Compatibility is
+proven by committed static parity fixtures; no third-party TOTP library is a dependency of this
+package.
+
+What does **not** carry over by itself is how the old library *stored* the columns. This package
+reads the secret through Laravel's `encrypted` cast (`Crypt::encryptString()`), and recovery codes
+as a JSON list — encrypted the same way in `encrypted` storage, one-way hashes in `hashed`. Every
+existing row has to be in that format, so plan a one-off data migration.
+
+### From Laravel Fortify
+
+Fortify uses the same column names but stores `encrypt($secret)` and
+`encrypt(json_encode($codes))` — **serialized** payloads. Read as they are, the secret comes back
+as `s:16:"…";` (every `attempt()` then throws `InvalidBase32Exception`) and the recovery codes as
+an empty list. Don't publish this package's migration — the columns already exist. Instead, swap
+Fortify's `TwoFactorAuthenticatable` trait for [`HasTwoFactorAuthentication`](#host-model-setup)
+and run this migration once, under the same `APP_KEY`:
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        // Fortify only adds two_factor_confirmed_at when its `confirm` option is on.
+        $confirms = Schema::hasColumn('users', 'two_factor_confirmed_at');
+
+        Schema::table('users', function (Blueprint $table) use ($confirms): void {
+            if (! $confirms) {
+                $table->timestamp('two_factor_confirmed_at')->nullable();
+            }
+
+            $table->unsignedBigInteger('two_factor_last_used_timestep')->nullable();
+        });
+
+        DB::table('users')->whereNotNull('two_factor_secret')->lazyById()->each(
+            function (object $user) use ($confirms): void {
+                DB::table('users')->where('id', $user->id)->update([
+                    // Crypt::decrypt() unserializes Fortify's payload; encryptString() is what the cast reads.
+                    'two_factor_secret' => Crypt::encryptString(Crypt::decrypt($user->two_factor_secret)),
+                    'two_factor_recovery_codes' => $user->two_factor_recovery_codes === null
+                        ? null
+                        : Crypt::encryptString(Crypt::decrypt($user->two_factor_recovery_codes)),
+                    // Without Fortify's confirmation step, every stored secret was a live second factor.
+                    'two_factor_confirmed_at' => $confirms ? $user->two_factor_confirmed_at : now(),
+                ]);
+            },
+        );
+    }
+};
+```
+
+Then keep the imported codes matchable — they arrive in plaintext, so store them reversibly:
+
+```php
+// config/two-factor.php
+'recovery_codes' => [
+    'count' => 8,
+    'storage' => 'encrypted',
+],
+```
+
+With confirmation on, a Fortify row that has a secret but no `two_factor_confirmed_at` was an
+unfinished enrolment, and it stays pending here too. (If you switched Fortify's `confirm` off
+after migrating, stamp `two_factor_confirmed_at` for those rows yourself.) To move to the default
+`hashed` storage later, switch the setting and have users regenerate their codes — switching
+modes invalidates stored codes.
+
+### From other libraries
+
+Apply the same rule per column: the secret must be `Crypt::encryptString($base32Secret)` —
+wrap a plaintext value directly, or `Crypt::decrypt()` an `encrypt()`-serialized one first. Plaintext
+recovery codes become `Crypt::encryptString(json_encode($codes))` under `encrypted` storage. Add
+`two_factor_last_used_timestep` (and `two_factor_confirmed_at`, set for every enrolled user) if
+the old schema lacks them.
 
 ## Testing
 
@@ -539,6 +626,7 @@ TwoFactor::fake()->acceptCode('424242');
 
 // Drive attempt(): pass via a recovery code, report 2 left, assert the method:
 $fake = TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(2);
+$this->post('/login/2fa', ['code' => 'ABCDE-12345'])->assertOk();
 $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
 
 // Fail as a replay (VerificationResult::$replayed === true):

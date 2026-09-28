@@ -2,11 +2,16 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
+use RoundlyConsulting\TwoFactor\Actions\AttemptTwoFactorCode;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
@@ -14,6 +19,8 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
+use RoundlyConsulting\TwoFactor\TwoFactorManager;
+use RoundlyConsulting\TwoFactor\UserTwoFactor;
 
 /**
  * The 2FA challenge is a security boundary, so its two mutable pieces of state —
@@ -189,6 +196,105 @@ it('locks the challenge out at the configured maximum even under interleaved fai
     // The competing failure counts: the attacker is locked out at 3, not 4.
     TwoFactor::for($user)->attempt('000000');
 })->throws(TwoFactorRateLimitedException::class);
+
+/**
+ * A burst of parallel guesses: while the first one is still inside verify(), every
+ * other request of the burst enters the challenge. With a read-then-hit limiter all
+ * of them pass the read before any failure is recorded, so the whole burst is
+ * verified; counting each attempt up front (one atomic increment) caps the burst at
+ * `attempts.max` verifications and turns the rest away before any work.
+ */
+it('never verifies more than attempts.max guesses from a parallel burst', function (): void {
+    config(['two-factor.attempts' => ['max' => 5, 'decay' => 60]]);
+
+    [$user] = racingUser();
+
+    $burst = new class(new TwoFactorManager(app()), $user, 25) implements TwoFactorService
+    {
+        public int $verified = 0;
+
+        public int $rejected = 0;
+
+        private int $entered = 1;
+
+        public function __construct(
+            private readonly TwoFactorManager $inner,
+            private readonly TwoFactorUser $user,
+            private readonly int $size,
+        ) {}
+
+        public function for(TwoFactorAuthenticatable&Model $user): UserTwoFactor
+        {
+            return $this->inner->for($user);
+        }
+
+        public function generateSecret(?int $length = null): string
+        {
+            return $this->inner->generateSecret($length);
+        }
+
+        public function currentCode(string $secret, ?int $timestamp = null): string
+        {
+            return $this->inner->currentCode($secret, $timestamp);
+        }
+
+        public function verify(string $secret, string $code, ?int $window = null): int|false
+        {
+            $this->verified++;
+
+            // The rest of the burst arrives before this guess's outcome lands.
+            while ($this->entered < $this->size) {
+                $this->entered++;
+
+                try {
+                    app(AttemptTwoFactorCode::class)->execute($this->user, '000000');
+                } catch (TwoFactorRateLimitedException) {
+                    $this->rejected++;
+                }
+            }
+
+            return $this->inner->verify($secret, $code, $window);
+        }
+
+        public function provisioningUri(string $secret, string $label, ?string $issuer = null): string
+        {
+            return $this->inner->provisioningUri($secret, $label, $issuer);
+        }
+
+        public function generateRecoveryCodes(?int $count = null): array
+        {
+            return $this->inner->generateRecoveryCodes($count);
+        }
+    };
+
+    app()->instance(TwoFactorService::class, $burst);
+
+    expect(app(AttemptTwoFactorCode::class)->execute($user, '000000')->verified)->toBeFalse()
+        ->and($burst->verified)->toBe(5)
+        ->and($burst->rejected)->toBe(20);
+});
+
+it('never locks out past the window when the lockout timer was evicted', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    config(['two-factor.attempts' => ['max' => 2, 'decay' => 60]]);
+
+    [$user] = racingUser();
+    $key = 'two-factor:'.$user::class.':'.$user->getKey();
+
+    RateLimiter::hit($key, 60);
+    RateLimiter::hit($key, 60);
+    RateLimiter::hit($key, 60);
+
+    // A store that evicted the timer while the counter survived: the counter still
+    // expires with its own window, so the lockout cannot outlive it.
+    Cache::forget($key.':timer');
+    Carbon::setTestNow(now()->addSeconds(61));
+
+    expect(TwoFactor::for($user)->attempt('000000')->verified)->toBeFalse()
+        ->and(RateLimiter::attempts($key))->toBe(1);
+
+    Carbon::setTestNow();
+});
 
 it('lets only one of two racing submissions of the same totp code through', function (): void {
     Event::fake([TwoFactorReplayDetected::class]);

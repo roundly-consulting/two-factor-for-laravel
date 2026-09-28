@@ -59,18 +59,13 @@ final readonly class AttemptTwoFactorCode
         $limit = ConfigGuard::attemptLimit();
         $key = $this->rateLimiterKey($user);
 
-        if ($limit !== null && RateLimiter::tooManyAttempts($key, $limit->max)) {
-            $seconds = RateLimiter::availableIn($key);
-            $this->events?->dispatch(new TwoFactorRateLimited($user, $seconds));
-
-            throw TwoFactorRateLimitedException::make($seconds);
-        }
+        $this->countAttempt($user, $limit, $key);
 
         $timestep = $this->twoFactor->verify($secret, $code);
 
         if ($timestep !== false) {
+            // A replay stays counted, like any other failure.
             if (! $this->replayGuard->claim($user, $timestep)) {
-                $this->registerFailure($limit, $key);
                 $this->events?->dispatch(new TwoFactorReplayDetected($user, $timestep));
 
                 return VerificationResult::failed($this->remaining($user), replayed: true);
@@ -91,7 +86,6 @@ final readonly class AttemptTwoFactorCode
             return $result;
         }
 
-        $this->registerFailure($limit, $key);
         $this->events?->dispatch(new TwoFactorVerificationFailed($user));
 
         return $result;
@@ -152,11 +146,32 @@ final readonly class AttemptTwoFactorCode
         return count($user->twoFactorRecoveryCodes());
     }
 
-    private function registerFailure(?AttemptLimit $limit, string $key): void
+    /**
+     * Count this attempt BEFORE any verification work, as one atomic increment,
+     * and refuse it when the count passes `attempts.max`. Reading the count and
+     * recording the failure afterwards let every request of a parallel burst pass
+     * the read before any failure landed — N guesses in flight were N
+     * verifications. The count stands unless the code passes (see clearAttempts).
+     *
+     * @throws TwoFactorRateLimitedException
+     */
+    private function countAttempt(TwoFactorAuthenticatable&Model $user, ?AttemptLimit $limit, string $key): void
     {
-        if ($limit !== null) {
-            RateLimiter::hit($key, $limit->decay);
+        if ($limit === null) {
+            return;
         }
+
+        $attempts = RateLimiter::hit($key, $limit->decay);
+
+        if ($attempts <= $limit->max) {
+            return;
+        }
+
+        $seconds = RateLimiter::availableIn($key);
+
+        $this->events?->dispatch(new TwoFactorRateLimited($user, $seconds));
+
+        throw TwoFactorRateLimitedException::make($seconds);
     }
 
     private function clearAttempts(?AttemptLimit $limit, string $key): void

@@ -127,6 +127,20 @@ it('falls back to a single-use recovery code', function (): void {
     expect($user->fresh()->twoFactorRecoveryCodesRemaining())->toBe(7);
 });
 
+it('accepts a recovery code typed in lowercase without its dash, once', function (): void {
+    [$user, $setup] = enrolledUserWithSetup();
+    $code = $setup->recoveryCodes[0];
+    $typed = strtolower(str_replace('-', '', $code));
+
+    expect(TwoFactor::for($user->fresh())->attempt($typed))
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::RecoveryCode)
+        ->remainingRecoveryCodes->toBe(7);
+
+    // Normalising the input changes nothing about single use.
+    expect(TwoFactor::for($user->fresh())->attempt($code)->verified)->toBeFalse();
+});
+
 it('does not double-spend a recovery code across a stale read', function (): void {
     [$user, $setup] = enrolledUserWithSetup();
     $code = $setup->recoveryCodes[0];

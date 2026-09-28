@@ -36,6 +36,20 @@ it('generates a secret that round-trips through the strict codec', function (int
         ->and(Base32::decode($secret))->not->toBe('');
 })->with([16, 20, 26, 32, 40]);
 
+/**
+ * No base32 string is 1, 3 or 6 characters long (mod 8): its last character would
+ * carry bits of no byte, and the strict codec rejects it. Such a length used to be
+ * minted as asked and then fail every verify() — crypto's Secret::base32 now rounds
+ * it UP one character, which keeps at least the requested entropy.
+ */
+it('mints a working secret for every allowed length', function (int $length): void {
+    $secret = TwoFactor::generateSecret($length);
+    $expected = in_array($length % 8, [1, 3, 6], true) ? $length + 1 : $length;
+
+    expect($secret)->toHaveLength($expected)
+        ->and(TwoFactor::verify($secret, TwoFactor::currentCode($secret)))->not->toBeFalse();
+})->with(range(16, 40));
+
 it('honours an explicit secret length', function (): void {
     expect(TwoFactor::generateSecret(32))->toHaveLength(32);
 });
@@ -73,6 +87,34 @@ it('produces the code for an explicit timestamp', function (): void {
     // RFC 6238 Appendix B, SHA-1, T=59 truncated to the default 6 digits.
     expect(TwoFactor::currentCode(testSecret(), 59))->toBe('287082');
 });
+
+/**
+ * RFC 6238 Appendix B, end to end through this package's own config (8 digits, each
+ * algorithm with its seed) — not just crypto's primitive in isolation.
+ */
+it('reproduces every RFC 6238 Appendix B vector through the facade', function (string $algorithm, int $timestamp, string $expected): void {
+    $seeds = [
+        'sha1' => '12345678901234567890',
+        'sha256' => '12345678901234567890123456789012',
+        'sha512' => '1234567890123456789012345678901234567890123456789012345678901234',
+    ];
+
+    config(['two-factor.digits' => 8, 'two-factor.algorithm' => $algorithm]);
+    $secret = Base32::encode($seeds[$algorithm]);
+
+    expect(TwoFactor::currentCode($secret, $timestamp))->toBe($expected);
+
+    Carbon::setTestNow(Carbon::createFromTimestamp($timestamp));
+    expect(TwoFactor::verify($secret, $expected, 0))->toBe(intdiv($timestamp, 30));
+    Carbon::setTestNow();
+})->with([
+    ['sha1', 59, '94287082'], ['sha256', 59, '46119246'], ['sha512', 59, '90693936'],
+    ['sha1', 1111111109, '07081804'], ['sha256', 1111111109, '68084774'], ['sha512', 1111111109, '25091201'],
+    ['sha1', 1111111111, '14050471'], ['sha256', 1111111111, '67062674'], ['sha512', 1111111111, '99943326'],
+    ['sha1', 1234567890, '89005924'], ['sha256', 1234567890, '91819424'], ['sha512', 1234567890, '93441116'],
+    ['sha1', 2000000000, '69279037'], ['sha256', 2000000000, '90698825'], ['sha512', 2000000000, '38618901'],
+    ['sha1', 20000000000, '65353130'], ['sha256', 20000000000, '77737706'], ['sha512', 20000000000, '47863826'],
+]);
 
 it('rejects a malformed code before doing any hmac work', function (string $code): void {
     expect(TwoFactor::verify(testSecret(), $code))->toBeFalse();

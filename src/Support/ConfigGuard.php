@@ -81,6 +81,10 @@ final class ConfigGuard
      * Bound a secret length — from config or from an explicit caller argument —
      * before it reaches the generator, so an out-of-range length always surfaces
      * as this package's config exception.
+     *
+     * Every length in range works: one no base32 string can have (1, 3 or 6
+     * mod 8) is rounded up one character by crypto's Secret::base32(), so the
+     * secret always decodes and never carries less entropy than asked for.
      */
     public static function assertSecretLength(int $length): int
     {

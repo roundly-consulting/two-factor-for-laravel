@@ -47,6 +47,17 @@ it('runs the full enrol, confirm, disable happy path', function (): void {
     Event::assertDispatched(TwoFactorDisabled::class);
 });
 
+it('confirms an enrolment started with a secret length base32 cannot end on', function (int $length): void {
+    config(['two-factor.secret_length' => $length]);
+    $user = TwoFactorUser::factory()->create();
+
+    $setup = TwoFactor::for($user)->start();
+    TwoFactor::for($user)->confirm(TwoFactor::currentCode($setup->secret));
+
+    expect($user->fresh()->hasTwoFactorEnabled())->toBeTrue()
+        ->and($setup->secret)->toHaveLength($length + 1);
+})->with([17, 19, 22, 25, 30]);
+
 it('encrypts the stored secret at rest', function (): void {
     $user = TwoFactorUser::factory()->create();
     $setup = app(StartEnrolment::class)->execute($user);

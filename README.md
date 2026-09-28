@@ -29,7 +29,9 @@ library ships in this package.
   [crypto-for-laravel](https://github.com/roundly-consulting/crypto-for-laravel).
 - Constant-time verification and replay protection (a code can't be reused).
 - Encrypted TOTP secret and hashed (one-way) recovery codes at rest, both hidden from serialization.
-- Ergonomic surface: a `TwoFactor` facade, lifecycle Actions, a user-model trait, and events.
+- One API three ways: the `TwoFactor` facade (`TwoFactor::for($user)->start()/confirm()/attempt()/status()`),
+  the injectable `TwoFactorService` contract, or the action classes — plus a user-model trait,
+  events and a recording `TwoFactor::fake()`.
 - **Standards-compatible** — existing TOTP secrets from standard authenticator apps keep verifying unchanged.
 
 ## Requirements
@@ -138,7 +140,7 @@ return [
         'storage' => 'hashed',    // 'hashed' (default) | 'encrypted'
     ],
 
-    // Built-in brute-force limiter for verifyFor(), keyed per user. Set to null
+    // Built-in brute-force limiter for attempt(), keyed per user. Set to null
     // to disable it and rely on your own throttle middleware instead.
     'attempts' => [
         'max' => 5,               // failed attempts before lockout
@@ -217,12 +219,27 @@ final class User extends Authenticatable implements TwoFactorAuthenticatable
 
 ## Usage
 
+Everything that reads or changes one user's two-factor goes through `TwoFactor::for($user)`;
+the stateless TOTP primitives stay flat on the facade.
+
+```php
+use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
+
+$twoFactor = TwoFactor::for($user);
+
+$setup  = $twoFactor->start(issuer: 'Acme');            // TwoFactorSetup — begin (or restart) enrolment
+$twoFactor->confirm($code);                             // first authenticator code switches 2FA on
+$result = $twoFactor->attempt($code);                   // VerificationResult — the login challenge
+$status = $twoFactor->status();                         // TwoFactorStatus
+$codes  = $twoFactor->recoveryCodes()->regenerate();    // list<string> — show once
+$left   = $twoFactor->recoveryCodes()->remaining();     // int
+$twoFactor->disable();                                  // clears every 2FA column
+```
+
 ### Enrol
 
 ```php
-use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
-
-$setup = app(StartEnrolment::class)->execute($user);
+$setup = TwoFactor::for($user)->start();
 
 $setup->secret;          // base32 secret (store is handled for you)
 $setup->provisioningUri; // otpauth://totp/Acme:user@acme.io?secret=...&issuer=Acme&...
@@ -230,11 +247,12 @@ $setup->recoveryCodes;   // list<string> — show these once, they are the only 
 $setup->issuer;          // the issuer the URI carries — show it next to the QR
 ```
 
-The issuer defaults to `two-factor.issuer`, then `app.name` (a blank value at either level counts
-as unset). Brand it per call — one name per guard or tenant — with the `issuer` argument:
+`start()` throws `TwoFactorAlreadyEnabledException` when 2FA is already on. The issuer defaults
+to `two-factor.issuer`, then `app.name` (a blank value at either level counts as unset). Brand it
+per call — one name per guard or tenant — and override the account label the same way:
 
 ```php
-$setup = app(StartEnrolment::class)->execute($client, issuer: 'Acme Partner Portal');
+$setup = TwoFactor::for($client)->start(label: 'billing@acme.io', issuer: 'Acme Partner Portal');
 ```
 
 ### Rendering the QR code
@@ -250,7 +268,7 @@ wherever suits your stack.
 use RoundlyConsulting\Qr\Enums\ErrorCorrection;
 use RoundlyConsulting\Qr\Facades\Qr;
 
-$setup = $user->startTwoFactorEnrolment();
+$setup = TwoFactor::for($user)->start();
 
 $svg = Qr::otpauth($setup->provisioningUri)
     ->size(240)
@@ -277,9 +295,7 @@ enrolment screen, and don't keep it once enrolment is confirmed.
 The user scans the code and submits the first 6-digit code to finish enrolment:
 
 ```php
-use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
-
-app(ConfirmEnrolment::class)->execute($user, $request->string('code')->toString());
+TwoFactor::for($user)->confirm($request->string('code')->toString());
 // throws InvalidTwoFactorCodeException on a wrong code,
 // TwoFactorNotPendingException if there is no pending enrolment — including when 2FA is
 // already enabled: a confirm is never a silent no-op, so a clean return always means this
@@ -289,27 +305,16 @@ app(ConfirmEnrolment::class)->execute($user, $request->string('code')->toString(
 ### Verify during login
 
 ```php
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
-use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 
 try {
-    if (TwoFactor::verifyFor($user, $request->string('code')->toString())) {
-        // accepted — TOTP (replay-safe) or a single-use recovery code
-    }
+    $result = TwoFactor::for($user)->attempt($request->string('code')->toString());
 } catch (TwoFactorRateLimitedException $e) {
     // too many failed attempts — retry after $e->secondsUntilAvailable seconds
 }
-```
 
-Need to know **how** the challenge was passed? `attempt()` runs the exact same checks and
-returns a `VerificationResult` instead of a bool:
-
-```php
-use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
-
-$result = TwoFactor::attempt($user, $request->string('code')->toString());
-
-$result->verified;               // bool — same answer verifyFor() gives
+$result->verified;               // bool — TOTP (replay-safe) or a single-use recovery code
 $result->method;                 // TwoFactorMethod::Totp | ::RecoveryCode | null on failure
 $result->remainingRecoveryCodes; // int, after this attempt — "1 recovery code left"
 $result->replayed;               // true when a valid code's timestep was already used
@@ -322,42 +327,52 @@ if ($result->method === TwoFactorMethod::RecoveryCode) {
 The remaining count after a recovery code is read from the row locked for the spend, so it is
 correct even when two requests race.
 
-`verifyFor()` (and `attempt()`) checks the TOTP code with replay protection first, then falls back to a
-single-use recovery code (consuming it). A code whose timestep was already used is rejected,
-and so is any code for a user whose enrolment is still **pending** (`confirmed_at` unset) —
-only a confirmed second factor can satisfy a challenge.
+`attempt()` checks the TOTP code with replay protection first, then falls back to a single-use
+recovery code (consuming it). A code whose timestep was already used is rejected, and so is any
+code for a user whose enrolment is still **pending** (`confirmed_at` unset) — only a confirmed
+second factor can satisfy a challenge.
 
-**Built-in brute-force limiter.** `verifyFor()` throttles per user out of the box: after
+**Built-in brute-force limiter.** `attempt()` throttles per user out of the box: after
 `attempts.max` (default 5) failed attempts within `attempts.decay` seconds (default 60) it
 throws `TwoFactorRateLimitedException` before doing any verification work, and dispatches a
 `TwoFactorRateLimited` event. A successful verification clears the counter. Set
 `config('two-factor.attempts')` to `null` to disable it entirely and use your own `throttle:`
 middleware instead.
 
-### Disable & regenerate
+### Status
 
 ```php
-use RoundlyConsulting\TwoFactor\Actions\DisableTwoFactor;
-use RoundlyConsulting\TwoFactor\Actions\RegenerateRecoveryCodes;
+$status = TwoFactor::for($user)->status();
 
-app(DisableTwoFactor::class)->execute($user);          // clears all 2FA state
-$codes = app(RegenerateRecoveryCodes::class)->execute($user); // returns the new codes
+$status->enabled;                // bool — a confirmed second factor
+$status->pending;                // bool — enrolment started, waiting for its first code
+$status->recoveryCodesRemaining; // int
+$status->confirmedAt;            // ?CarbonImmutable — null unless enabled
+```
+
+### Recovery codes & disable
+
+```php
+$codes = TwoFactor::for($user)->recoveryCodes()->regenerate(); // new plaintext set — show once
+$left  = TwoFactor::for($user)->recoveryCodes()->remaining();  // drive a "regenerate?" prompt
+
+TwoFactor::for($user)->disable(); // clears all 2FA state
 ```
 
 ### On the user model (trait verbs)
 
-`HasTwoFactorAuthentication` also exposes the whole lifecycle on the user itself, so the
-model is the subject of the action — no container-resolved action needed:
+`HasTwoFactorAuthentication` exposes the same lifecycle on the user itself. Every verb delegates
+to `TwoFactor::for($this)`, so `TwoFactor::fake()` sees it:
 
 ```php
-$setup  = $user->startTwoFactorEnrolment();          // → TwoFactorSetup
-$user->confirmTwoFactor($code);                      // finish enrolment
-$ok     = $user->verifyTwoFactorCode($code);         // login challenge (== TwoFactor::verifyFor)
-$result = $user->attemptTwoFactorCode($code);        // → VerificationResult (== TwoFactor::attempt)
-$user->disableTwoFactor();
-$codes  = $user->regenerateTwoFactorRecoveryCodes(); // list<string>
+$setup  = $user->startTwoFactorEnrolment();          // → TwoFactorSetup (== ->start())
+$user->confirmTwoFactor($code);                      // == ->confirm()
+$result = $user->attemptTwoFactorCode($code);        // → VerificationResult (== ->attempt())
+$ok     = $user->verifyTwoFactorCode($code);         // bool (== ->attempt()->verified)
+$user->disableTwoFactor();                           // == ->disable()
+$codes  = $user->regenerateTwoFactorRecoveryCodes(); // == ->recoveryCodes()->regenerate()
 
-$user->twoFactorRecoveryCodesRemaining();            // int — drive a "regenerate?" prompt
+$user->twoFactorRecoveryCodesRemaining();            // int
 ```
 
 Pass a label and/or an issuer —
@@ -365,15 +380,53 @@ Pass a label and/or an issuer —
 `twoFactorLabel()` on the model to key the provisioning URI on a username/phone instead of
 the default (email → primary key).
 
-### Facade primitives
+### TOTP primitives
 
 ```php
 $secret = TwoFactor::generateSecret();                          // base32
 $code   = TwoFactor::currentCode($secret);                      // current 6-digit code
 $step   = TwoFactor::verify($secret, $code);                    // int timestep | false
-$result = TwoFactor::attempt($user, $code);                     // VerificationResult
 $uri    = TwoFactor::provisioningUri($secret, 'user@acme.io');  // otpauth:// URI
 $codes  = TwoFactor::generateRecoveryCodes();                   // list<string>
+```
+
+`verify()` is the bare RFC 6238 check — no replay guard, no recovery codes, no limiter. Use
+`TwoFactor::for($user)->attempt()` for a login challenge.
+
+### Without the facade
+
+The facade root is the `TwoFactorService` contract (implemented by `TwoFactorManager`). Inject
+it for the same API — `TwoFactor::fake()` swaps this binding too:
+
+```php
+use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
+
+final readonly class ChallengeController
+{
+    public function __construct(private TwoFactorService $twoFactor) {}
+
+    public function __invoke(Request $request): Response
+    {
+        $result = $this->twoFactor->for($request->user())->attempt($request->string('code')->toString());
+        // ...
+    }
+}
+```
+
+Or run a use case's action directly — each handle method is one action:
+
+| Handle method | Action |
+|---|---|
+| `for($user)->start($label, $issuer)` | `StartEnrolment::execute($user, $label, $issuer)` |
+| `for($user)->confirm($code)` | `ConfirmEnrolment::execute($user, $code)` |
+| `for($user)->attempt($code)` | `AttemptTwoFactorCode::execute($user, $code)` |
+| `for($user)->recoveryCodes()->regenerate()` | `RegenerateRecoveryCodes::execute($user)` |
+| `for($user)->disable()` | `DisableTwoFactor::execute($user)` |
+
+```php
+use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
+
+$setup = app(StartEnrolment::class)->execute($user, issuer: 'Acme');
 ```
 
 ## Security
@@ -393,7 +446,7 @@ $codes  = TwoFactor::generateRecoveryCodes();                   // list<string>
   For multi-node hosts, use the `cache` guard backed by an atomic store (Redis / database).
 - **Atomic single-use recovery codes** — consumption re-reads the row under a transaction lock
   before removing the matched code, so a code phished once cannot be raced through twice.
-- **Built-in brute-force limiter** — `verifyFor()` ships a per-user throttle on by default
+- **Built-in brute-force limiter** — `attempt()` ships a per-user throttle on by default
   (`attempts.max` / `attempts.decay`), throwing `TwoFactorRateLimitedException` on lockout. Set
   `attempts` to `null` to opt out and run your own `throttle:` middleware.
 - **Bounds-checked config** — `digits` (6–8), `period` (15–120), `window` (0–2) and
@@ -425,11 +478,11 @@ All events carry the user model (never a secret or a code); a few add a non-sens
 
 | Event | Fired when |
 |---|---|
-| `TwoFactorEnrolmentStarted` | `StartEnrolment` persists a pending secret |
-| `TwoFactorConfirmed` | `ConfirmEnrolment` enables 2FA |
-| `TwoFactorDisabled` | `DisableTwoFactor` clears 2FA state |
-| `RecoveryCodesRegenerated` | `RegenerateRecoveryCodes` replaces the code set |
-| `RecoveryCodeConsumed` | `attempt`/`verifyFor` burns a recovery code (carries `remaining`, the count left) |
+| `TwoFactorEnrolmentStarted` | `start()` persists a pending secret |
+| `TwoFactorConfirmed` | `confirm()` enables 2FA |
+| `TwoFactorDisabled` | `disable()` clears 2FA state |
+| `RecoveryCodesRegenerated` | `recoveryCodes()->regenerate()` replaces the code set |
+| `RecoveryCodeConsumed` | `attempt()` burns a recovery code (carries `remaining`, the count left) |
 | `TwoFactorVerified` | a user passes a challenge (carries `method`: `TwoFactorMethod::Totp` or `::RecoveryCode`) |
 | `TwoFactorVerificationFailed` | an enrolled user fails a challenge (not on replay/no-secret) |
 | `TwoFactorReplayDetected` | a code with an already-used timestep is rejected |
@@ -464,11 +517,12 @@ composer test
 
 ### Faking two-factor in host tests
 
-`TwoFactor::fake()` swaps the service (and every action that depends on it) for a
-programmable, no-crypto double, so you can assert your 2FA flow without freezing the clock
-or computing real codes:
+`TwoFactor::fake()` swaps the service for a programmable, no-crypto double — the facade, the
+injected `TwoFactorService` and the model verbs all see it — so you can assert your 2FA flow
+without freezing the clock or computing real codes:
 
 ```php
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 
 // Accept any code (the default) and assert the challenge was verified:
@@ -489,17 +543,35 @@ $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
 
 // Fail as a replay (VerificationResult::$replayed === true):
 TwoFactor::fake()->replay();
+
+// Enrolment writes run for real on the fake's canned secret and codes, and are recorded:
+$fake = TwoFactor::fake();
+$this->post('/two-factor/enable')->assertOk();        // calls TwoFactor::for($user)->start()
+$this->post('/two-factor/disable')->assertOk();       // or $user->disableTwoFactor()
+$fake->assertStarted($user);
+$fake->assertDisabled($user);
+$fake->assertNothingRegenerated();
 ```
 
 Programmable behaviour: `accept()` (passes via TOTP), `acceptRecoveryCode()`, `reject()`,
 `replay()`, `acceptCode($code)`, `withRemainingRecoveryCodes($n)` (unset, the fake reports the
 user's stored count, one lower when a recovery code passes), `withSecret($secret)`,
-`withRecoveryCodes(...$codes)`. `attempt()` and `verifyFor()` are recorded alike. Assertions
-(each throws a package exception, so they work under any runner): `assertVerified()`,
-`assertVerifiedFor($user)`, `assertVerifiedVia($method)`,
-`assertVerificationFailed()`, `assertNothingVerified()`, `assertVerifyCount($n)`,
-`assertCodeAttempted($code)`. The fake is test-only and performs no TOTP math — it is bound
-solely through `TwoFactor::fake()` and never in production.
+`withRecoveryCodes(...$codes)`.
+
+Assertions (each throws a package exception, so they work under any runner; `$user` is
+optional wherever it appears):
+
+| Recorded call | Assert | Negative |
+|---|---|---|
+| `for($user)->attempt()` | `assertVerified()`, `assertVerifiedFor($user)`, `assertVerifiedVia($method)`, `assertVerificationFailed()`, `assertVerifyCount($n)`, `assertCodeAttempted($code)` | `assertNothingVerified()` |
+| `for($user)->start()` | `assertStarted(?$user)` | `assertNothingStarted()` |
+| `for($user)->confirm()` (successful) | `assertConfirmed(?$user)` | `assertNothingConfirmed()` |
+| `for($user)->recoveryCodes()->regenerate()` | `assertRegenerated(?$user)` | `assertNothingRegenerated()` |
+| `for($user)->disable()` | `assertDisabled(?$user)` | `assertNothingDisabled()` |
+
+`status()` and `recoveryCodes()->remaining()` read through to the model. The fake is test-only
+and performs no TOTP math — it is bound solely through `TwoFactor::fake()` and never in
+production.
 
 ## Changelog
 

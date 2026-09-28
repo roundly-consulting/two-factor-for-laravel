@@ -12,18 +12,35 @@ Initial public release.
 
 - Native RFC 6238 TOTP two-factor authentication with no third-party crypto dependencies,
   compatible with standard authenticator apps.
-- The full lifecycle as actions and user-model verbs: `StartEnrolment` /
-  `startTwoFactorEnrolment()`, `ConfirmEnrolment`, `DisableTwoFactor` and
-  `RegenerateRecoveryCodes`.
+- The full lifecycle on one per-user handle, `TwoFactor::for($user)`: `start()`, `confirm()`,
+  `attempt()`, `status()` (a `TwoFactorStatus` with `enabled`, `pending`,
+  `recoveryCodesRemaining` and `confirmedAt`), `recoveryCodes()->regenerate()/remaining()` and
+  `disable()`. The same API is injectable as the `TwoFactorService` contract
+  (`TwoFactorManager`), and each use case is an action — `StartEnrolment`, `ConfirmEnrolment`,
+  `AttemptTwoFactorCode`, `RegenerateRecoveryCodes`, `DisableTwoFactor`.
+- User-model verbs (`startTwoFactorEnrolment()`, `confirmTwoFactor()`, `attemptTwoFactorCode()`,
+  `verifyTwoFactorCode()`, `disableTwoFactor()`, `regenerateTwoFactorRecoveryCodes()`) that
+  delegate to `TwoFactor::for($this)`.
 - `otpauth://` provisioning URIs with a configurable, per-call issuer, ready to render as a QR
   code (server-side with `qr-for-laravel`, or in your front end).
-- Login verification with `TwoFactor::verifyFor()`, or `TwoFactor::attempt()` returning a
-  `VerificationResult` that says whether a TOTP or a recovery code was used.
+- Login verification with `TwoFactor::for($user)->attempt()`, returning a `VerificationResult`
+  that says whether a TOTP or a recovery code was used.
 - Single-use recovery codes, hashed at rest by default (encrypted storage available).
 - Encrypted TOTP secrets, automatically hidden from model serialization.
 - Constant-time comparison and atomic replay protection, so a code can never be used twice.
 - A built-in per-user brute-force limiter (`two-factor.attempts`).
 - Events for enrolment, confirmation, disabling, recovery codes, verification success and
   failure, replays and rate limiting.
-- `TwoFactor` facade primitives (`generateSecret()`, `currentCode()`, `provisioningUri()`) and
-  `TwoFactor::fake()` for host-app tests.
+- `TwoFactor` facade primitives (`generateSecret()`, `currentCode()`, `verify()`,
+  `provisioningUri()`, `generateRecoveryCodes()`).
+- `TwoFactor::fake()` (`TwoFactorFake`) for host-app tests: programmable attempt outcomes, and
+  every enrolment write recorded — including through the model verbs — with
+  `assertStarted/Confirmed/Regenerated/Disabled()` and their `assertNothing*()` twins.
+
+### Changed
+
+- The flat `TwoFactor::attempt($user, $code)` and `TwoFactor::verifyFor($user, $code)` are gone;
+  use `TwoFactor::for($user)->attempt($code)` (and `->verified` for the bool).
+- The implementation class `TwoFactor` is now `TwoFactorManager` (it shared its short name with
+  the facade) and is no longer aliased in the container — inject `TwoFactorService`.
+- The fake class `FakeTwoFactor` is now `TwoFactorFake`.

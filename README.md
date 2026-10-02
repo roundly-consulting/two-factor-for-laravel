@@ -83,8 +83,16 @@ php artisan migrate
 ```
 
 Re-publishing overwrites the file it published to last time, so you never end up with two
-copies of the same migration. The migration has a `down()` that drops the four columns again,
-so `migrate:rollback` and `migrate:refresh` work as usual.
+copies of the same migration. The migration is forward-only: there is no `down()`, so
+`migrate:rollback` leaves the four columns in place. Running it again is safe — it adds only
+the columns the table doesn't have yet, so `migrate` after a rollback and `migrate:refresh`
+never fail on a duplicate column. To remove the columns, drop them in a migration of your own:
+
+```php
+Schema::table('users', function (Blueprint $table): void { // or your `two-factor.table`
+    $table->dropTwoFactorColumns();
+});
+```
 
 The migration adds four nullable columns to your `users` table — or to the table named by
 `two-factor.table` (`TWO_FACTOR_TABLE`), read when the migration runs. If you write your own

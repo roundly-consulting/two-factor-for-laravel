@@ -13,17 +13,11 @@ return new class extends Migration
     {
         // `two-factor.table` (default `users`). For further account tables, call
         // `$table->twoFactorColumns()` in your own migration.
+        //
+        // Forward-only: there is no `down()`, so `migrate:rollback` leaves the columns in
+        // place. Only the missing ones are added, so running this again is safe.
         Schema::table(TwoFactorColumns::table(), function (Blueprint $table): void {
-            $table->twoFactorColumns();
-        });
-    }
-
-    // This file lives in your app's migration history and alters your own table,
-    // so `migrate:rollback` / `migrate:refresh` can unwind it.
-    public function down(): void
-    {
-        Schema::table(TwoFactorColumns::table(), function (Blueprint $table): void {
-            $table->dropTwoFactorColumns();
+            TwoFactorColumns::addMissing($table);
         });
     }
 };

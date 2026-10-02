@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use RoundlyConsulting\Testing\Database\DriverMatrix;
@@ -86,12 +88,13 @@ it('runs the published migration against the configured account table', function
 });
 
 /**
- * The published file lives in the host's own migration history, so `migrate:rollback`
- * and `migrate:refresh` must be able to unwind it: without a `down()` a rollback was a
- * silent no-op that dropped the migration record and left the columns, and the next
- * `migrate` failed on a duplicate `two_factor_secret` column.
+ * Forward-only, like every roundly migration: the stub ships no `down()`, so
+ * `migrate:rollback` drops the migration record and leaves the columns in place. The next
+ * `migrate` — and every `migrate:refresh` — then runs `up()` over a table that already has
+ * them, which used to fail on a duplicate `two_factor_secret` column. `up()` adds only the
+ * columns that are missing, so the real artisan sequence goes through end to end.
  */
-it('rolls the published migration back so a re-run applies cleanly', function () use ($stub): void {
+it('survives migrate, rollback, migrate and refresh without a down()', function () use ($stub): void {
     Schema::create('clients', function (Blueprint $table): void {
         $table->id();
         $table->string('email');
@@ -99,12 +102,11 @@ it('rolls the published migration back so a re-run applies cleanly', function ()
 
     config(['two-factor.table' => 'clients']);
 
-    $directory = sys_get_temp_dir().'/two-factor-rollback-'.Str::random(8);
+    $directory = sys_get_temp_dir().'/two-factor-rerun-'.Str::random(8);
     mkdir($directory);
-    $file = $directory.'/2026_01_01_000000_add_two_factor_columns_to_users_table.php';
-    copy($stub, $file);
+    copy($stub, $directory.'/2026_01_01_000000_add_two_factor_columns_to_users_table.php');
 
-    $migration = require $file;
+    $options = ['--path' => $directory, '--realpath' => true, '--force' => true];
     $columns = [
         'two_factor_secret',
         'two_factor_recovery_codes',
@@ -112,30 +114,67 @@ it('rolls the published migration back so a re-run applies cleanly', function ()
         'two_factor_last_used_timestep',
     ];
 
-    // migrate → rollback → migrate, the sequence that used to fail.
-    $migration->up();
-    $migration->down();
+    expect(Artisan::call('migrate', $options))->toBe(0)
+        ->and(Schema::hasColumns('clients', $columns))->toBeTrue();
 
-    foreach ($columns as $column) {
-        expect(Schema::hasColumn('clients', $column))->toBeFalse();
-    }
+    // Rollback forgets the migration and leaves the columns — there is nothing to unwind with.
+    expect(Artisan::call('migrate:rollback', $options))->toBe(0)
+        ->and(Schema::hasColumns('clients', $columns))->toBeTrue();
 
-    expect(Schema::hasColumn('clients', 'email'))->toBeTrue();
-
-    $migration->up();
-
-    expect(Schema::hasColumns('clients', $columns))->toBeTrue();
+    expect(Artisan::call('migrate', $options))->toBe(0)
+        ->and(Artisan::call('migrate:refresh', $options))->toBe(0)
+        ->and(Schema::hasColumns('clients', array_merge(['email'], $columns)))->toBeTrue();
 
     Schema::drop('clients');
     array_map(unlink(...), (array) glob($directory.'/*'));
     rmdir($directory);
 });
 
+/**
+ * The partial case: a table that already carries some of the columns (a run a
+ * non-transactional engine interrupted half-way, or a hand-added column) gets only the
+ * rest, under the names `two-factor.columns` maps them to, and the existing one is left alone.
+ */
+it('adds only the configured columns the table does not have yet', function () use ($stub): void {
+    config([
+        'two-factor.table' => 'clients',
+        'two-factor.columns' => [
+            'secret' => 'mfa_secret',
+            'recovery_codes' => 'mfa_recovery_codes',
+            'confirmed_at' => 'mfa_confirmed_at',
+            'last_used_timestep' => 'mfa_last_used_timestep',
+        ],
+    ]);
+
+    Schema::create('clients', function (Blueprint $table): void {
+        $table->id();
+        $table->string('mfa_secret')->default('kept');
+    });
+
+    DB::table('clients')->insert(['id' => 1]);
+
+    $migration = require $stub;
+    $migration->up();
+    $migration->up();
+
+    expect(Schema::hasColumns('clients', [
+        'mfa_secret',
+        'mfa_recovery_codes',
+        'mfa_confirmed_at',
+        'mfa_last_used_timestep',
+    ]))->toBeTrue()
+        ->and(Schema::hasColumn('clients', 'two_factor_secret'))->toBeFalse()
+        ->and(DB::table('clients')->value('mfa_secret'))->toBe('kept');
+
+    Schema::drop('clients');
+});
+
 it('ships a stub that names its table only through the config-driven helper', function () use ($stub): void {
     $body = (string) file_get_contents($stub);
 
-    // A literal table name here would silently ignore `two-factor.table` — in `up()`
-    // or in `down()`, which must unwind the same table `up()` altered.
+    // A literal table name here would silently ignore `two-factor.table`. And no `down()`:
+    // packages migrate forward only — re-running `up()` is what has to be safe.
     expect(preg_match("/Schema::table\\(\\s*'/", $body))->toBe(0)
-        ->and(substr_count($body, 'Schema::table(TwoFactorColumns::table()'))->toBe(2);
+        ->and(substr_count($body, 'Schema::table(TwoFactorColumns::table()'))->toBe(1)
+        ->and($body)->not->toContain('function down(');
 });

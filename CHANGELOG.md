@@ -31,7 +31,8 @@ Initial public release.
 - Constant-time comparison and atomic replay protection, so a code can never be used twice.
 - A built-in per-user brute-force limiter (`two-factor.attempts`) that counts each attempt
   atomically before verifying it, so a burst of parallel guesses can't exceed the limit.
-- A publishable migration for the host's users table, with a `down()` so rollbacks work.
+- A publishable, forward-only migration for the host's users table that adds only missing
+  columns, so re-running it after a rollback or during `migrate:refresh` is safe.
 - A documented one-off migration for apps moving from Laravel Fortify's stored format.
 - Events for enrolment, confirmation, disabling, recovery codes, verification success and
   failure, replays and rate limiting.

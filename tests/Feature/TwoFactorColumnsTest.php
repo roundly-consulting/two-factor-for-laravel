@@ -46,13 +46,17 @@ it('targets users when the table config is absent', function (): void {
     expect(TwoFactorColumns::table())->toBe('users');
 });
 
-it('throws on a blank or non-string table config (strict config)', function (mixed $value): void {
+it('targets users when the table config is blank (strict config)', function (string $blank): void {
+    config(['two-factor.table' => $blank]);
+
+    expect(TwoFactorColumns::table())->toBe('users');
+})->with(['empty' => [''], 'whitespace' => ['  ']]);
+
+it('throws on a non-string table config (strict config)', function (mixed $value): void {
     config(['two-factor.table' => $value]);
 
     TwoFactorColumns::table();
 })->with([
-    'empty' => [''],
-    'whitespace' => ['  '],
     'array' => [['clients']],
     'int' => [5],
 ])->throws(InvalidTwoFactorConfigException::class, 'two-factor.table');

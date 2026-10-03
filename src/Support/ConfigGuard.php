@@ -22,10 +22,11 @@ use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
  * accept — the package's own InvalidTwoFactorConfigException stays the single
  * failure mode a host has to catch.
  *
- * Every read is strict: an absent (null) key takes its default, but a present
- * value of the wrong shape — `'five'`, `'1.5'`, `''`, an unknown enum value, a
- * blank column name — throws InvalidTwoFactorConfigException naming the key. A
- * typo never quietly becomes a 0-step window or a default column.
+ * Every read is strict: a key that is not set — absent, null or blank (`''` or
+ * whitespace, a host's `KEY=`) — takes its default, but a present value of the
+ * wrong shape — `'five'`, `'1.5'`, an unknown enum value, a non-string column
+ * name — throws InvalidTwoFactorConfigException naming the key. A typo never
+ * quietly becomes a 0-step window or a default column.
  */
 final class ConfigGuard
 {
@@ -41,7 +42,7 @@ final class ConfigGuard
      */
     public static function algorithm(): OtpAlgorithm
     {
-        $value = config('two-factor.algorithm') ?? OtpAlgorithm::Sha1->value;
+        $value = self::set(config('two-factor.algorithm')) ?? OtpAlgorithm::Sha1->value;
 
         if ($value instanceof OtpAlgorithm) {
             return $value;
@@ -113,7 +114,8 @@ final class ConfigGuard
 
     /**
      * The resolved brute-force limiter, or null when the host disables it (a null
-     * `attempts` config) to run its own throttling middleware instead.
+     * `attempts` config) to run its own throttling middleware instead. A blank
+     * value is not set, so the shipped limits apply.
      */
     public static function attemptLimit(): ?AttemptLimit
     {
@@ -124,7 +126,7 @@ final class ConfigGuard
         }
 
         // `false`, `'off'` or `0` is not how the limiter is switched off — only null is.
-        if (! is_array($attempts)) {
+        if (! is_array($attempts) && self::set($attempts) !== null) {
             throw InvalidTwoFactorConfigException::attemptsShape(get_debug_type($attempts));
         }
 
@@ -180,11 +182,12 @@ final class ConfigGuard
      */
     public static function recoveryCodeStorage(): RecoveryCodeStorage
     {
-        return RecoveryCodeStorage::fromConfig(config('two-factor.recovery_codes.storage') ?? RecoveryCodeStorage::Hashed->value);
+        return RecoveryCodeStorage::fromConfig(self::set(config('two-factor.recovery_codes.storage')) ?? RecoveryCodeStorage::Hashed->value);
     }
 
     /**
-     * The replay-guard mode; null (or `none`) switches replay protection off.
+     * The replay-guard mode; null (or `none`) switches replay protection off, and a
+     * blank value is not set, so the shipped `column` guard applies.
      */
     public static function replayGuard(): ReplayGuardMode
     {
@@ -223,7 +226,7 @@ final class ConfigGuard
 
     /**
      * The four two-factor column names on the account table, each `two-factor.columns.*`
-     * or its default when absent. A blank or non-string name throws.
+     * or its default when not set (absent, null or blank). A non-string name throws.
      *
      * @return array{secret: string, recovery_codes: string, confirmed_at: string, last_used_timestep: string}
      */
@@ -231,7 +234,7 @@ final class ConfigGuard
     {
         $columns = config('two-factor.columns');
 
-        if ($columns !== null && ! is_array($columns)) {
+        if (self::set($columns) !== null && ! is_array($columns)) {
             throw InvalidTwoFactorConfigException::notAString('two-factor.columns', $columns);
         }
 
@@ -244,8 +247,9 @@ final class ConfigGuard
     }
 
     /**
-     * A strict integer: the default only when absent; anything but an int or a
-     * canonical integer string throws (a `'five'` window must not read as 0).
+     * A strict integer: the default when not set (absent, null or blank); anything
+     * but an int or a canonical integer string throws (a `'five'` window must not
+     * read as 0).
      */
     private static function integer(string $key, mixed $value, int $default, ?int $min = null): int
     {
@@ -253,16 +257,26 @@ final class ConfigGuard
     }
 
     /**
-     * A table or column name: the default only when absent; blank or non-string throws.
+     * A table or column name: the default when not set (absent, null or blank); a
+     * non-string throws.
      */
     private static function name(string $key, mixed $value, string $default): string
     {
-        $value ??= $default;
+        $value = self::set($value) ?? $default;
 
-        if (! is_string($value) || trim($value) === '') {
+        if (! is_string($value)) {
             throw InvalidTwoFactorConfigException::notAString($key, $value);
         }
 
         return $value;
+    }
+
+    /**
+     * The value, or null when it is not set: a blank string (`''` or whitespace —
+     * what a host's `KEY=` puts in config) means the same as an absent key.
+     */
+    private static function set(mixed $value): mixed
+    {
+        return is_string($value) && trim($value) === '' ? null : $value;
     }
 }

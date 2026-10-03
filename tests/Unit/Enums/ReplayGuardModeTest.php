@@ -21,6 +21,10 @@ it('treats a null config value as none', function (): void {
     expect(ReplayGuardMode::fromConfig(null))->toBe(ReplayGuardMode::None);
 });
 
+it('reads a blank config value as not set, so the shipped column guard applies', function (string $blank): void {
+    expect(ReplayGuardMode::fromConfig($blank))->toBe(ReplayGuardMode::Column);
+})->with(['empty' => [''], 'whitespace' => ['  ']]);
+
 it('throws on an unknown mode', function (): void {
     ReplayGuardMode::fromConfig('bogus');
 })->throws(InvalidTwoFactorConfigException::class);

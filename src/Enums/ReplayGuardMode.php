@@ -17,7 +17,9 @@ enum ReplayGuardMode: string
 
     /**
      * Resolve the configured replay-guard mode. A null config value (or the
-     * literal 'none') disables replay protection via the NullReplayGuard.
+     * literal 'none') disables replay protection via the NullReplayGuard. A blank
+     * value (`''` or whitespace) is not set, so the shipped `column` guard applies
+     * — an empty env var never switches replay protection off.
      *
      * @throws InvalidTwoFactorConfigException
      */
@@ -25,6 +27,10 @@ enum ReplayGuardMode: string
     {
         if ($value === null) {
             return self::None;
+        }
+
+        if (is_string($value) && trim($value) === '') {
+            return self::Column;
         }
 
         if ($value instanceof self) {

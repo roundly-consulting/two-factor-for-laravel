@@ -25,19 +25,19 @@ final class AboutSection
     public static function payload(): array
     {
         return [
-            'Algorithm' => (string) config('two-factor.algorithm'),
+            'Algorithm' => self::string('two-factor.algorithm', 'sha1'),
             'Code' => sprintf(
                 '%d digits every %ds',
-                (int) config('two-factor.digits', 6),
-                (int) config('two-factor.period', 30),
+                self::int('two-factor.digits', 6),
+                self::int('two-factor.period', 30),
             ),
-            'Drift window' => sprintf('±%d timesteps', (int) config('two-factor.window', 1)),
-            'Secret length' => sprintf('%d base32 chars', (int) config('two-factor.secret_length', 32)),
-            'Issuer' => config('two-factor.issuer') === null ? 'DEFAULT (app.name)' : 'SET',
+            'Drift window' => sprintf('±%d timesteps', self::int('two-factor.window', 1)),
+            'Secret length' => sprintf('%d base32 chars', self::int('two-factor.secret_length', 32)),
+            'Issuer' => self::value('two-factor.issuer') === null ? 'DEFAULT (app.name)' : 'SET',
             'Recovery codes' => sprintf(
                 '%d %s codes',
-                (int) config('two-factor.recovery_codes.count', 8),
-                (string) config('two-factor.recovery_codes.storage'),
+                self::int('two-factor.recovery_codes.count', 8),
+                self::string('two-factor.recovery_codes.storage', 'hashed'),
             ),
             'Replay guard' => self::replayGuard(),
             'Attempt limit' => self::attemptLimit(),
@@ -53,9 +53,12 @@ final class AboutSection
             return 'OFF';
         }
 
+        // Blank is not set: the shipped column guard, as ReplayGuardMode resolves it.
+        $mode = self::value('two-factor.replay_guard') ?? 'column';
+
         if ($mode === 'cache') {
             // The store's *name* stays out of the output (the jwt secret-safe rule).
-            return config('two-factor.cache.store') === null
+            return self::value('two-factor.cache.store') === null
                 ? 'cache (default store)'
                 : 'cache (custom store)';
         }
@@ -71,15 +74,38 @@ final class AboutSection
 
         return sprintf(
             '%d attempts / %ds lockout',
-            (int) config('two-factor.attempts.max', 5),
-            (int) config('two-factor.attempts.decay', 60),
+            self::int('two-factor.attempts.max', 5),
+            self::int('two-factor.attempts.decay', 60),
         );
+    }
+
+    /**
+     * The raw value, or null when it is not set — absent, null or blank (`''` or
+     * whitespace, a host's `KEY=`) — so a blank key renders as its default here too.
+     */
+    private static function value(string $key): mixed
+    {
+        $value = config($key);
+
+        return is_string($value) && trim($value) === '' ? null : $value;
+    }
+
+    private static function int(string $key, int $default): int
+    {
+        $value = self::value($key) ?? $default;
+
+        return is_scalar($value) ? (int) $value : $default;
+    }
+
+    private static function string(string $key, string $default): string
+    {
+        $value = self::value($key) ?? $default;
+
+        return is_scalar($value) ? (string) $value : $default;
     }
 
     private static function columns(): string
     {
-        $columns = config('two-factor.columns');
-
         $default = [
             'secret' => 'two_factor_secret',
             'recovery_codes' => 'two_factor_recovery_codes',
@@ -87,6 +113,12 @@ final class AboutSection
             'last_used_timestep' => 'two_factor_last_used_timestep',
         ];
 
-        return $columns === $default ? 'default' : 'remapped';
+        foreach ($default as $column => $name) {
+            if ((self::value("two-factor.columns.{$column}") ?? $name) !== $name) {
+                return 'remapped';
+            }
+        }
+
+        return 'default';
     }
 }

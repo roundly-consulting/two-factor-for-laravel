@@ -32,9 +32,9 @@ return [
     ],
 
     // Replay protection: reject any code whose timestep <= the last successful one.
-    'replay_guard' => ReplayGuardMode::Column->value, // 'column' | 'cache' | 'none' (null → none)
+    'replay_guard' => ReplayGuardMode::Column->value, // 'column' | 'cache' | 'none' (null → none; blank → column)
     'cache' => [
-        'store' => env('TWO_FACTOR_CACHE_STORE'), // null → default store (used by cache guard)
+        'store' => env('TWO_FACTOR_CACHE_STORE'), // null/blank → default store (used by cache guard)
         'ttl' => 60 * 60 * 24,                    // seconds to retain last timestep in cache mode
     ],
 

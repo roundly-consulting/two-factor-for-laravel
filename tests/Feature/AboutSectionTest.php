@@ -113,6 +113,42 @@ it('reports every replay-guard mode', function (?string $mode, ?string $store, s
     'disabled' => [null, null, 'OFF'],
 ]);
 
+it('reports blank keys as not set, the way the readers resolve them (strict config)', function (): void {
+    config([
+        'two-factor.algorithm' => '',
+        'two-factor.digits' => '',
+        'two-factor.period' => ' ',
+        'two-factor.window' => '',
+        'two-factor.secret_length' => '',
+        'two-factor.issuer' => '',
+        'two-factor.recovery_codes.count' => '',
+        'two-factor.recovery_codes.storage' => '',
+        'two-factor.replay_guard' => '',
+        'two-factor.attempts' => '',
+    ]);
+
+    expect(aboutOutput())->toMatch('/Algorithm\s*\.*\s*sha1/')
+        ->toContain('6 digits every 30s')
+        ->toContain('±1 timesteps')
+        ->toContain('32 base32 chars')
+        ->toContain('DEFAULT (app.name)')
+        ->toContain('8 hashed codes')
+        ->toMatch('/Replay guard\s*\.*\s*column/')
+        ->toContain('5 attempts / 60s lockout');
+});
+
+it('reports blank column names as the default map (strict config)', function (): void {
+    config(['two-factor.columns' => ['secret' => '', 'confirmed_at' => ' ']]);
+
+    expect(aboutOutput())->toMatch('/Columns\s*\.*\s*default/');
+});
+
+it('reports a blank cache store as the default store (strict config)', function (): void {
+    config(['two-factor.replay_guard' => 'cache', 'two-factor.cache.store' => '']);
+
+    expect(aboutOutput())->toContain('cache (default store)');
+});
+
 it('reports a disabled attempt limiter as the host taking over', function (): void {
     config(['two-factor.attempts' => null]);
 

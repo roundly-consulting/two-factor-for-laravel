@@ -105,7 +105,6 @@ it('throws on a junk integer instead of reading it as 0 (strict config)', functi
     };
 })->with([
     'window five' => ['two-factor.window', 'five'],
-    'window empty' => ['two-factor.window', ''],
     'window float string' => ['two-factor.window', '1.5'],
     'window bool' => ['two-factor.window', false],
     'digits junk' => ['two-factor.digits', '6abc'],
@@ -147,6 +146,24 @@ it('uses the defaults for absent integer keys (strict config)', function (): voi
         ->and(ConfigGuard::cacheTtl())->toBe(86_400);
 });
 
+it('reads a blank integer key as not set, so the default applies (strict config)', function (string $blank): void {
+    config([
+        'two-factor.digits' => $blank,
+        'two-factor.period' => $blank,
+        'two-factor.window' => $blank,
+        'two-factor.secret_length' => $blank,
+        'two-factor.recovery_codes.count' => $blank,
+        'two-factor.cache.ttl' => $blank,
+    ]);
+
+    expect(ConfigGuard::digits())->toBe(6)
+        ->and(ConfigGuard::period())->toBe(30)
+        ->and(ConfigGuard::window())->toBe(1)
+        ->and(ConfigGuard::secretLength())->toBe(32)
+        ->and(ConfigGuard::recoveryCodeCount())->toBe(8)
+        ->and(ConfigGuard::cacheTtl())->toBe(86_400);
+})->with(['empty' => [''], 'whitespace' => ['  ']]);
+
 it('refuses a recovery-code count or cache ttl below one (strict config)', function (string $key): void {
     config([$key => 0]);
 
@@ -172,8 +189,11 @@ it('only switches the limiter off with null (strict config)', function (mixed $v
     'zero' => [0],
 ])->throws(InvalidTwoFactorConfigException::class, 'attempts');
 
-it('throws on an unknown algorithm and defaults an absent one to sha1 (strict config)', function (): void {
+it('throws on an unknown algorithm and defaults an absent or blank one to sha1 (strict config)', function (): void {
     config(['two-factor.algorithm' => null]);
+    expect(ConfigGuard::algorithm())->toBe(OtpAlgorithm::Sha1);
+
+    config(['two-factor.algorithm' => '']);
     expect(ConfigGuard::algorithm())->toBe(OtpAlgorithm::Sha1);
 
     config(['two-factor.algorithm' => 'SHA256']);
@@ -199,6 +219,23 @@ it('resolves storage and replay modes, defaulting only an absent storage (strict
     expect(fn () => ConfigGuard::recoveryCodeStorage())->toThrow(InvalidTwoFactorConfigException::class, 'Hashed');
 });
 
+it('reads a blank storage or replay mode as not set, so the shipped default applies (strict config)', function (): void {
+    config(['two-factor.recovery_codes.storage' => ' ', 'two-factor.replay_guard' => '']);
+
+    expect(ConfigGuard::recoveryCodeStorage())->toBe(RecoveryCodeStorage::Hashed)
+        ->and(ConfigGuard::replayGuard())->toBe(ReplayGuardMode::Column);
+});
+
+it('reads a blank attempts value as not set, so the shipped limits apply (strict config)', function (): void {
+    config(['two-factor.attempts' => '']);
+
+    $limit = ConfigGuard::attemptLimit();
+
+    expect($limit)->toBeInstanceOf(AttemptLimit::class)
+        ->and($limit?->max)->toBe(5)
+        ->and($limit?->decay)->toBe(60);
+});
+
 it('reads the cache store, treating blank as the default store (strict config)', function (): void {
     config(['two-factor.cache.store' => 'redis']);
     expect(ConfigGuard::cacheStore())->toBe('redis');
@@ -221,12 +258,27 @@ it('resolves remapped columns and defaults absent ones (strict config)', functio
     ]);
 });
 
-it('throws on a blank or non-string column name (strict config)', function (mixed $columns): void {
+it('reads a blank column name, or a blank columns map, as not set (strict config)', function (mixed $columns): void {
+    config(['two-factor.columns' => $columns]);
+
+    expect(ConfigGuard::columns())->toBe([
+        'secret' => 'two_factor_secret',
+        'recovery_codes' => 'two_factor_recovery_codes',
+        'confirmed_at' => 'two_factor_confirmed_at',
+        'last_used_timestep' => 'two_factor_last_used_timestep',
+    ]);
+})->with([
+    'blank column' => [['confirmed_at' => '']],
+    'whitespace column' => [['secret' => '  ']],
+    'blank map' => [''],
+]);
+
+it('throws on a non-string column name (strict config)', function (mixed $columns): void {
     config(['two-factor.columns' => $columns]);
 
     ConfigGuard::columns();
 })->with([
-    'blank column' => [['confirmed_at' => '']],
     'array column' => [['secret' => ['x']]],
+    'int column' => [['confirmed_at' => 5]],
     'not an array' => ['two_factor_secret'],
 ])->throws(InvalidTwoFactorConfigException::class);

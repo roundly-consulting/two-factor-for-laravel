@@ -28,9 +28,9 @@
         "illuminate/database": "^12.0|^13.0",
         "illuminate/encryption": "^12.0|^13.0",
         "illuminate/support": "^12.0|^13.0",
-        "roundly-consulting/crypto-for-laravel": "@dev",
-        "roundly-consulting/enums-for-laravel": "@dev",
-        "roundly-consulting/package-toolkit-for-laravel": "@dev"
+        "roundly-consulting/crypto-for-laravel": "^1.0",
+        "roundly-consulting/enums-for-laravel": "^1.0",
+        "roundly-consulting/package-toolkit-for-laravel": "^1.0"
     },
     "require-dev": {
         "larastan/larastan": "^3.0",
@@ -39,61 +39,11 @@
         "orchestra/testbench": "^10.0|^11.0",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-arch": "^4.0",
-        "roundly-consulting/testing-for-laravel": "@dev"
+        "roundly-consulting/testing-for-laravel": "^1.0"
     },
     "suggest": {
         "roundly-consulting/qr-for-laravel": "Render the enrolment otpauth:// URI as an SVG QR code server-side: Qr::otpauth($setup->provisioningUri)->svg()"
     },
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../crypto-for-laravel*",
-            "options": {
-                "symlink": true
-            }
-        },
-        {
-            "type": "vcs",
-            "url": "https://github.com/roundly-consulting/crypto-for-laravel",
-            "no-api": true
-        },
-        {
-            "type": "path",
-            "url": "../enums-for-laravel*",
-            "options": {
-                "symlink": true
-            }
-        },
-        {
-            "type": "vcs",
-            "url": "https://github.com/roundly-consulting/enums-for-laravel",
-            "no-api": true
-        },
-        {
-            "type": "path",
-            "url": "../package-toolkit-for-laravel*",
-            "options": {
-                "symlink": true
-            }
-        },
-        {
-            "type": "vcs",
-            "url": "https://github.com/roundly-consulting/package-toolkit-for-laravel",
-            "no-api": true
-        },
-        {
-            "type": "path",
-            "url": "../testing-for-laravel*",
-            "options": {
-                "symlink": true
-            }
-        },
-        {
-            "type": "vcs",
-            "url": "https://github.com/roundly-consulting/testing-for-laravel",
-            "no-api": true
-        }
-    ],
     "autoload": {
         "psr-4": {
             "RoundlyConsulting\\TwoFactor\\": "src/"
@@ -125,7 +75,5 @@
                 "TwoFactor": "RoundlyConsulting\\TwoFactor\\Facades\\TwoFactor"
             }
         }
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+    }
 }

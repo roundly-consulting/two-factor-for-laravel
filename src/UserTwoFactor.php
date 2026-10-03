@@ -20,6 +20,7 @@ use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorCodeException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAlreadyEnabledException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorNotPendingException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use SensitiveParameter;
 
 /**
@@ -97,7 +98,7 @@ readonly class UserTwoFactor
 
     private function confirmedAt(): ?CarbonImmutable
     {
-        $value = $this->user->getAttribute((string) config('two-factor.columns.confirmed_at'));
+        $value = $this->user->getAttribute(ConfigGuard::columns()['confirmed_at']);
 
         if ($value instanceof DateTimeInterface) {
             return CarbonImmutable::instance($value);

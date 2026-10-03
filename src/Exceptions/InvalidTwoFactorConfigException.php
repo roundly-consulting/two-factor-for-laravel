@@ -79,4 +79,21 @@ final class InvalidTwoFactorConfigException extends TwoFactorException
             $value,
         ));
     }
+
+    public static function attemptsShape(string $type): self
+    {
+        return new self(sprintf(
+            'Invalid two-factor "attempts" (%s); expected an array with max and decay, or null to disable the limiter.',
+            $type,
+        ));
+    }
+
+    public static function notAString(string $key, mixed $value): self
+    {
+        return new self(sprintf(
+            'Invalid config [%s] (%s); expected a non-empty string.',
+            $key,
+            is_string($value) ? '"'.$value.'"' : get_debug_type($value),
+        ));
+    }
 }

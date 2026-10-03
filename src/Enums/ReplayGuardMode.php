@@ -27,7 +27,12 @@ enum ReplayGuardMode: string
             return self::None;
         }
 
-        return self::tryFrom((string) $value)
-            ?? throw InvalidTwoFactorConfigException::replayGuard((string) $value);
+        if ($value instanceof self) {
+            return $value;
+        }
+
+        // Strings only: a `false` or `0` is not how replay protection is switched off.
+        return (is_string($value) ? self::tryFrom($value) : null)
+            ?? throw InvalidTwoFactorConfigException::replayGuard(is_scalar($value) ? var_export($value, true) : get_debug_type($value));
     }
 }

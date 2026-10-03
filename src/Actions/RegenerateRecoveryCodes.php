@@ -8,8 +8,8 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
-use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodesRegenerated;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 
 /**
@@ -31,10 +31,10 @@ final readonly class RegenerateRecoveryCodes
         $codes = $this->twoFactor->generateRecoveryCodes();
 
         $manager = new RecoveryCodeManager(
-            RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
+            ConfigGuard::recoveryCodeStorage(),
         );
 
-        $user->setAttribute((string) config('two-factor.columns.recovery_codes'), $manager->forStorage($codes));
+        $user->setAttribute(ConfigGuard::columns()['recovery_codes'], $manager->forStorage($codes));
         $user->save();
 
         $this->events?->dispatch(new RecoveryCodesRegenerated($user));

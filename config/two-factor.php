@@ -8,8 +8,8 @@ use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
 
 return [
     // TOTP parameters — defaults match standard authenticator apps (RFC 6238).
-    // Bounds are enforced at runtime; out-of-range values throw
-    // InvalidTwoFactorConfigException rather than silently weakening 2FA.
+    // Bounds are enforced at runtime; out-of-range or non-integer values (e.g.
+    // 'five') throw InvalidTwoFactorConfigException rather than silently weakening 2FA.
     'algorithm' => OtpAlgorithm::Sha1->value,     // 'sha1' | 'sha256' | 'sha512'
     'digits' => 6,                                // 6–8
     'period' => 30,                               // 15–120 seconds per timestep

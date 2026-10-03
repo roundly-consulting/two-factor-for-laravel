@@ -37,14 +37,13 @@ final class TwoFactorColumns
 
     /**
      * The table the published migration stub alters: `two-factor.table`, or
-     * `users` when unset or blank. Read here rather than in the stub so the
-     * config contract (which scans `src/` only) sees the key as used.
+     * `users` when absent; a blank or non-string value throws. Read here rather
+     * than in the stub so the config contract (which scans `src/` only) sees the
+     * key as used.
      */
     public static function table(): string
     {
-        $table = config('two-factor.table');
-
-        return is_string($table) && $table !== '' ? $table : 'users';
+        return ConfigGuard::table();
     }
 
     public static function drop(Blueprint $table): void
@@ -81,9 +80,6 @@ final class TwoFactorColumns
      */
     private static function columns(): array
     {
-        /** @var array{secret: string, recovery_codes: string, confirmed_at: string, last_used_timestep: string} $columns */
-        $columns = config('two-factor.columns');
-
-        return $columns;
+        return ConfigGuard::columns();
     }
 }

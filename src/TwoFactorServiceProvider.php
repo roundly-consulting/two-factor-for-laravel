@@ -16,6 +16,7 @@ use RoundlyConsulting\TwoFactor\ReplayGuards\CacheReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\ColumnReplayGuard;
 use RoundlyConsulting\TwoFactor\ReplayGuards\NullReplayGuard;
 use RoundlyConsulting\TwoFactor\Support\AboutSection;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\TwoFactorColumns;
 
 final class TwoFactorServiceProvider extends PackageServiceProvider
@@ -50,12 +51,12 @@ final class TwoFactorServiceProvider extends PackageServiceProvider
 
     private function resolveReplayGuard(Application $app): ReplayGuard
     {
-        return match (ReplayGuardMode::fromConfig(config('two-factor.replay_guard'))) {
+        return match (ConfigGuard::replayGuard()) {
             ReplayGuardMode::Column => new ColumnReplayGuard,
             ReplayGuardMode::Cache => new CacheReplayGuard(
                 $app->make(CacheFactory::class),
-                $this->nullableString(config('two-factor.cache.store')),
-                (int) config('two-factor.cache.ttl', 86400),
+                ConfigGuard::cacheStore(),
+                ConfigGuard::cacheTtl(),
             ),
             ReplayGuardMode::None => new NullReplayGuard,
         };
@@ -72,10 +73,5 @@ final class TwoFactorServiceProvider extends PackageServiceProvider
             /** @var Blueprint $this */
             TwoFactorColumns::drop($this);
         });
-    }
-
-    private function nullableString(mixed $value): ?string
-    {
-        return is_string($value) && $value !== '' ? $value : null;
     }
 }

@@ -29,11 +29,18 @@ enum RecoveryCodeStorage: string
     }
 
     /**
+     * Resolve a configured storage mode: a case, or its exact value. Anything else
+     * — a typo, a non-string — throws rather than changing how codes are kept.
+     *
      * @throws InvalidTwoFactorConfigException
      */
-    public static function fromConfig(string $value): self
+    public static function fromConfig(mixed $value): self
     {
-        return self::tryFrom($value)
-            ?? throw InvalidTwoFactorConfigException::storage($value);
+        if ($value instanceof self) {
+            return $value;
+        }
+
+        return (is_string($value) ? self::tryFrom($value) : null)
+            ?? throw InvalidTwoFactorConfigException::storage(is_scalar($value) ? (string) $value : get_debug_type($value));
     }
 }

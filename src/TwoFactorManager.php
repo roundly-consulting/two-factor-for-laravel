@@ -13,7 +13,6 @@ use RoundlyConsulting\Crypto\Otp\Totp;
 use RoundlyConsulting\Crypto\Random\Secret;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
-use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
@@ -111,10 +110,10 @@ final readonly class TwoFactorManager implements TwoFactorService
      */
     public function generateRecoveryCodes(?int $count = null): array
     {
-        $count ??= (int) config('two-factor.recovery_codes.count', 8);
+        $count ??= ConfigGuard::recoveryCodeCount();
 
         return (new RecoveryCodeManager(
-            RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
+            ConfigGuard::recoveryCodeStorage(),
         ))->generate($count);
     }
 

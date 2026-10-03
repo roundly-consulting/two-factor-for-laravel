@@ -8,6 +8,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorDisabled;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 
 /**
  * Clears every two-factor column, fully disabling 2FA for the user.
@@ -20,10 +21,7 @@ final readonly class DisableTwoFactor
 
     public function execute(TwoFactorAuthenticatable&Model $user): void
     {
-        /** @var array{secret: string, recovery_codes: string, confirmed_at: string, last_used_timestep: string} $columns */
-        $columns = config('two-factor.columns');
-
-        foreach ($columns as $column) {
+        foreach (ConfigGuard::columns() as $column) {
             $user->setAttribute($column, null);
         }
 

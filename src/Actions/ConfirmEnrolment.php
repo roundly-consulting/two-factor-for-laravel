@@ -13,6 +13,7 @@ use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorConfirmed;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorCodeException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorNotPendingException;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use SensitiveParameter;
 
 /**
@@ -54,7 +55,7 @@ final readonly class ConfirmEnrolment
             throw InvalidTwoFactorCodeException::make();
         }
 
-        $user->setAttribute((string) config('two-factor.columns.confirmed_at'), Date::now());
+        $user->setAttribute(ConfigGuard::columns()['confirmed_at'], Date::now());
         $user->save();
 
         // Spend the confirming timestep so the exact code just typed cannot be

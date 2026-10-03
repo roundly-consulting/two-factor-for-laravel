@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
 use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 
 /**
  * Persists the last-used timestep to a column on the user row.
@@ -50,6 +51,6 @@ final class ColumnReplayGuard implements ReplayGuard
 
     private function column(): string
     {
-        return (string) config('two-factor.columns.last_used_timestep');
+        return ConfigGuard::columns()['last_used_timestep'];
     }
 }

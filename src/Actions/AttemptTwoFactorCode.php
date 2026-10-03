@@ -12,7 +12,6 @@ use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\AttemptLimit;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
-use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
@@ -99,9 +98,9 @@ final readonly class AttemptTwoFactorCode
     private function consumeRecoveryCode(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
         $manager = new RecoveryCodeManager(
-            RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
+            ConfigGuard::recoveryCodeStorage(),
         );
-        $column = (string) config('two-factor.columns.recovery_codes');
+        $column = ConfigGuard::columns()['recovery_codes'];
 
         // Consume under a transaction with a locked, fresh re-read of the row so
         // two concurrent requests carrying the same code cannot both match a

@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
-use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorEnrolmentStarted;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAlreadyEnabledException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
@@ -42,7 +41,7 @@ final readonly class StartEnrolment
 
         $columns = $this->columns();
         $manager = new RecoveryCodeManager(
-            RecoveryCodeStorage::fromConfig((string) config('two-factor.recovery_codes.storage')),
+            ConfigGuard::recoveryCodeStorage(),
         );
 
         $user->setAttribute($columns['secret'], $secret);
@@ -70,9 +69,6 @@ final readonly class StartEnrolment
      */
     private function columns(): array
     {
-        /** @var array{secret: string, recovery_codes: string, confirmed_at: string, last_used_timestep: string} $columns */
-        $columns = config('two-factor.columns');
-
-        return $columns;
+        return ConfigGuard::columns();
     }
 }

@@ -24,3 +24,11 @@ it('treats a null config value as none', function (): void {
 it('throws on an unknown mode', function (): void {
     ReplayGuardMode::fromConfig('bogus');
 })->throws(InvalidTwoFactorConfigException::class);
+
+it('throws on a non-string mode instead of casting it (strict config)', function (mixed $value): void {
+    ReplayGuardMode::fromConfig($value);
+})->with([
+    'false' => [false],
+    'zero' => [0],
+    'array' => [['column']],
+])->throws(InvalidTwoFactorConfigException::class);

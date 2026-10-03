@@ -9,7 +9,7 @@ use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
-use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use SensitiveParameter;
 
 /**
@@ -131,9 +131,7 @@ trait HasTwoFactorAuthentication
 
         return [
             $columns['secret'] => 'encrypted',
-            $columns['recovery_codes'] => RecoveryCodeStorage::fromConfig(
-                (string) config('two-factor.recovery_codes.storage'),
-            )->cast(),
+            $columns['recovery_codes'] => ConfigGuard::recoveryCodeStorage()->cast(),
             $columns['confirmed_at'] => 'datetime',
         ];
     }
@@ -176,9 +174,6 @@ trait HasTwoFactorAuthentication
      */
     protected function twoFactorColumnMap(): array
     {
-        /** @var array{secret: string, recovery_codes: string, confirmed_at: string, last_used_timestep: string} $columns */
-        $columns = config('two-factor.columns');
-
-        return $columns;
+        return ConfigGuard::columns();
     }
 }

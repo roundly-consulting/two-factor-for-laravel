@@ -47,11 +47,11 @@ it('lets an action-based enrolment run against the fake with no crypto', functio
 });
 
 /**
- * The README's "Faking two-factor in host tests" block, run verbatim (extracted from
- * README.md) against the host routes it assumes — so every example in it has to be
- * a complete, passing sequence, not a fragment.
+ * The docs' "Faking two-factor in host tests" block (website docs), run verbatim against
+ * the host routes it assumes — keep this copy and the docs identical — so every example in
+ * it has to be a complete, passing sequence, not a fragment.
  */
-it('runs the readme fake examples as written', function (): void {
+it('runs the documented fake examples as written', function (): void {
     $user = TwoFactorUser::factory()->create();
 
     Route::post('/login/2fa', fn (Request $request) => TwoFactor::for($user)
@@ -67,10 +67,38 @@ it('runs the readme fake examples as written', function (): void {
         return response('ok');
     });
 
-    $readme = (string) file_get_contents(__DIR__.'/../../README.md');
-    $section = substr($readme, (int) strpos($readme, '### Faking two-factor in host tests'));
+    $example = <<<'PHP'
+        use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
+        use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 
-    expect(preg_match('/```php\n(.*?)\n```/s', $section, $match))->toBe(1);
+        // Accept any code (the default) and assert the challenge was verified:
+        $fake = TwoFactor::fake()->accept();
+        $this->post('/login/2fa', ['code' => '123456'])->assertOk();
+        $fake->assertVerifiedFor($user);
 
-    eval($match[1]);
+        // Reject every code:
+        TwoFactor::fake()->reject();
+        $this->post('/login/2fa', ['code' => '000000'])->assertStatus(422);
+
+        // Accept only a specific code:
+        TwoFactor::fake()->acceptCode('424242');
+
+        // Drive attempt(): pass via a recovery code, report 2 left, assert the method:
+        $fake = TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(2);
+        $this->post('/login/2fa', ['code' => 'ABCDE-12345'])->assertOk();
+        $fake->assertVerifiedVia(TwoFactorMethod::RecoveryCode);
+
+        // Fail as a replay (VerificationResult::$replayed === true):
+        TwoFactor::fake()->replay();
+
+        // Enrolment writes run for real on the fake's canned secret and codes, and are recorded:
+        $fake = TwoFactor::fake();
+        $this->post('/two-factor/enable')->assertOk();        // calls TwoFactor::for($user)->start()
+        $this->post('/two-factor/disable')->assertOk();       // or $user->disableTwoFactor()
+        $fake->assertStarted($user);
+        $fake->assertDisabled($user);
+        $fake->assertNothingRegenerated();
+        PHP;
+
+    eval($example);
 });

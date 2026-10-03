@@ -192,23 +192,25 @@ return [
 | `attempts` | array\|null | `['max' => 5, 'decay' => 60]` | Built-in per-user brute-force limiter; `null` disables it |
 | `attempts.max` | int | `5` | Failed attempts before lockout |
 | `attempts.decay` | int | `60` | Seconds the lockout lasts |
-| `replay_guard` | string\|null | `column` | Last-used-timestep store: `column`, `cache`, or `none`/`null` |
+| `replay_guard` | string\|null | `column` | Last-used-timestep store: `column`, `cache`, or `none`/`null` (blank is not set → `column`) |
 | `cache.store` | string\|null | `env('TWO_FACTOR_CACHE_STORE')` | Cache store for the `cache` guard; null or blank is the default store |
 | `cache.ttl` | int | `86400` | Seconds to retain the last timestep in `cache` mode (at least 1) |
-| `table` | string | `env('TWO_FACTOR_TABLE', 'users')` | Table the published migration alters; a blank or non-string value throws |
-| `columns.*` | string | — | Column names on every two-factor account table; a blank or non-string name throws |
+| `table` | string | `env('TWO_FACTOR_TABLE', 'users')` | Table the published migration alters; blank is not set → `users`, a non-string value throws |
+| `columns.*` | string | — | Column names on every two-factor account table; a blank name is not set → its default, a non-string name throws |
 
 The `replay_guard` and `recovery_codes.storage` values are backed by the `ReplayGuardMode` and
 `RecoveryCodeStorage` enums, and `algorithm` by crypto's `Otp\OtpAlgorithm` (`sha1` | `sha256` |
 `sha512`) — an unknown value throws `InvalidTwoFactorConfigException` at resolution, never a
 silent hash downgrade.
 
-Every setting is read strictly. An absent (`null`) key takes the default above; a present value
-of the wrong shape throws `InvalidTwoFactorConfigException` naming the key. Integers accept an
-int or a canonical integer string (`'30'`, as env values arrive), so `'five'`, `'1.5'` or `''`
-throws rather than becoming `0` — a junk `window` never silently disables drift. `attempts`
-is switched off by `null` only; `false`, `'off'` or `0` throws. A non-string `issuer` throws (a
-blank one still counts as unset).
+Every setting is read strictly. A key that is not set — absent, `null` or blank (`''` or
+whitespace, what a `KEY=` line in `.env` gives) — takes the default above; a present value of
+the wrong shape throws `InvalidTwoFactorConfigException` naming the key. Integers accept an int
+or a canonical integer string (`'30'`, as env values arrive), so `'five'` or `'1.5'` throws
+rather than becoming `0` — a junk `window` never silently disables drift. `attempts` is
+switched off by `null` only; `false`, `'off'` or `0` throws, and a blank value keeps the shipped
+limits. `replay_guard` is switched off by `null` or `none` only; a blank value keeps the
+`column` guard. A non-string `issuer` throws (a blank one is not set → `app.name`).
 
 **Env vars:** `TWO_FACTOR_ISSUER`, `TWO_FACTOR_CACHE_STORE`, `TWO_FACTOR_TABLE`.
 

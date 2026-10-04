@@ -11,7 +11,7 @@
         "otp",
         "authentication"
     ],
-    "homepage": "https://github.com/roundly-consulting/two-factor-for-laravel",
+    "homepage": "https://roundly-consulting.com/open-source/docs/two-factor-for-laravel",
     "license": "MIT",
     "authors": [
         {
@@ -20,6 +20,9 @@
             "role": "Developer"
         }
     ],
+    "support": {
+        "docs": "https://roundly-consulting.com/open-source/docs/two-factor-for-laravel"
+    },
     "require": {
         "php": "^8.4",
         "illuminate/cache": "^12.0|^13.0",

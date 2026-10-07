@@ -6,6 +6,8 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+## 1.1.2 - 2026-10-07
+
 ### Fixed
 
 - `php artisan about` now shows `invalid (<type>)` on every row whose config value has the wrong

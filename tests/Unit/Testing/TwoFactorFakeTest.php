@@ -88,7 +88,7 @@ it('builds a plausible provisioning uri without crypto', function (): void {
 });
 
 it('records attempts and passes the outcome through', function (): void {
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class)->accept();
 
     expect($fake->for($user)->attempt('123456')->verified)->toBeTrue();
@@ -123,7 +123,7 @@ it('throws when assertVerifiedFor finds no matching success', function (): void 
 })->throws(TwoFactorAssertionFailedException::class);
 
 it('throws when assertVerificationFailed finds only successes', function (): void {
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class)->accept();
     $fake->for($user)->attempt('123456');
 
@@ -147,8 +147,7 @@ it('throws when assertCodeAttempted finds no such code', function (): void {
 })->throws(TwoFactorAssertionFailedException::class);
 
 it('attempts via totp by default, reporting the user stored count', function (): void {
-    $user = TwoFactorUser::factory()->create();
-    $user->startTwoFactorEnrolment();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class);
 
     expect($fake->for($user->fresh())->attempt('123456'))
@@ -162,8 +161,7 @@ it('attempts via totp by default, reporting the user stored count', function ():
 });
 
 it('attempts via a recovery code, reporting one fewer than stored', function (): void {
-    $user = TwoFactorUser::factory()->create();
-    $user->startTwoFactorEnrolment();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class)->acceptRecoveryCode();
 
     expect($fake->for($user->fresh())->attempt('ABCDE-FGHIJ'))
@@ -203,7 +201,7 @@ it('fails an attempt with no method once told to reject', function (): void {
 });
 
 it('fails an attempt as replayed once told to replay', function (): void {
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class)->replay();
 
     expect($fake->for($user)->attempt('123456'))
@@ -215,7 +213,7 @@ it('fails an attempt as replayed once told to replay', function (): void {
 });
 
 it('clears replay mode when told to accept or accept a code', function (): void {
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
 
     expect(app(TwoFactorFake::class)->replay()->accept()->for($user)->attempt('x')->verified)->toBeTrue()
         ->and(app(TwoFactorFake::class)->replay()->acceptRecoveryCode()->for($user)->attempt('x')->method)->toBe(TwoFactorMethod::RecoveryCode)
@@ -223,7 +221,7 @@ it('clears replay mode when told to accept or accept a code', function (): void 
 });
 
 it('reports the current method for an accepted exact code', function (): void {
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class)->acceptRecoveryCode()->acceptCode('ABCDE-FGHIJ');
 
     expect($fake->for($user)->attempt('ABCDE-FGHIJ')->method)->toBe(TwoFactorMethod::RecoveryCode)
@@ -231,7 +229,7 @@ it('reports the current method for an accepted exact code', function (): void {
 });
 
 it('records every attempt', function (): void {
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
     $fake = app(TwoFactorFake::class);
 
     $fake->for($user)->attempt('111111');
@@ -258,3 +256,27 @@ it('throws when assertVerifiedVia only saw failures', function (): void {
 
     $fake->assertVerifiedVia(TwoFactorMethod::Totp);
 })->throws(TwoFactorAssertionFailedException::class);
+
+/**
+ * The fake must never pass a challenge the real action refuses: only a confirmed enrolment
+ * is a working second factor, so a host test cannot go green on a user who never enrolled.
+ */
+it('fails an attempt for a user without confirmed two-factor, like the real action', function (Closure $prepare): void {
+    $user = TwoFactorUser::factory()->create();
+    $prepare($user);
+    $fake = app(TwoFactorFake::class)->accept();
+
+    expect($fake->for($user->fresh())->attempt('123456'))
+        ->verified->toBeFalse()
+        ->method->toBeNull()
+        ->replayed->toBeFalse()
+        ->and($fake->acceptRecoveryCode()->for($user->fresh())->attempt('ABCDE-FGHIJ')->verified)->toBeFalse()
+        ->and($fake->replay()->for($user->fresh())->attempt('123456')->replayed)->toBeFalse();
+
+    $fake->assertVerifyCount(3);
+    $fake->assertVerificationFailed();
+    expect(fn () => $fake->assertVerified())->toThrow(TwoFactorAssertionFailedException::class);
+})->with([
+    'never enrolled' => [fn (TwoFactorUser $user): null => null],
+    'pending enrolment' => [fn (TwoFactorUser $user): mixed => $user->startTwoFactorEnrolment()],
+]);

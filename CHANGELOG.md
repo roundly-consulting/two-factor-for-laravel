@@ -11,6 +11,10 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 - Requires `roundly-consulting/crypto-for-laravel` `^1.0.1`: that release refuses empty, short
   (under 10 bytes) and all-zero OTP secrets, which this package now reports as
   `InvalidTwoFactorSecretException`.
+- `TwoFactor::fake()`: `attempt()` now fails a user without confirmed two-factor, exactly like the
+  real action, whatever outcome is programmed — a host test can no longer pass a challenge
+  production would refuse. Tests that attempt for an un-enrolled user must enrol them first
+  (`TwoFactor::for($user)->start()` then `->confirm('123456')` under the fake).
 
 ### Fixed
 

@@ -20,7 +20,7 @@ it('swaps the bound service for the fake', function (): void {
 
 it('drives attempt through the facade without real totp', function (): void {
     $fake = TwoFactor::fake()->accept();
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
 
     expect(TwoFactor::for($user)->attempt('123456')->verified)->toBeTrue();
 
@@ -71,6 +71,12 @@ it('runs the documented fake examples as written', function (): void {
         use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
         use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 
+        // attempt() only passes a user with confirmed 2FA, as in production. Enrol them first:
+        // under the fake, enrolment runs for real on its canned secret and accepts any code.
+        TwoFactor::fake();
+        TwoFactor::for($user)->start();
+        TwoFactor::for($user)->confirm('123456');
+
         // Accept any code (the default) and assert the challenge was verified:
         $fake = TwoFactor::fake()->accept();
         $this->post('/login/2fa', ['code' => '123456'])->assertOk();
@@ -93,10 +99,10 @@ it('runs the documented fake examples as written', function (): void {
 
         // Enrolment writes run for real on the fake's canned secret and codes, and are recorded:
         $fake = TwoFactor::fake();
-        $this->post('/two-factor/enable')->assertOk();        // calls TwoFactor::for($user)->start()
         $this->post('/two-factor/disable')->assertOk();       // or $user->disableTwoFactor()
-        $fake->assertStarted($user);
+        $this->post('/two-factor/enable')->assertOk();        // calls TwoFactor::for($user)->start()
         $fake->assertDisabled($user);
+        $fake->assertStarted($user);
         $fake->assertNothingRegenerated();
         PHP;
 

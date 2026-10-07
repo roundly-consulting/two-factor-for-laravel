@@ -20,7 +20,8 @@ use SensitiveParameter;
  * by TwoFactor::fake(). It performs NO TOTP math — outcomes are programmable
  * (accept/acceptRecoveryCode/reject/replay/acceptCode) and every
  * `for($user)->attempt()` is recorded so a host can assert its 2FA flow without
- * freezing the clock or threading real secrets.
+ * freezing the clock or threading real secrets. Like the real action, `attempt()`
+ * fails a user without confirmed two-factor whatever outcome is programmed.
  *
  * Enrolment writes (`start`, `confirm`, `disable`, `recoveryCodes()->regenerate`)
  * run the real actions against the fake's canned secret, codes and programmable
@@ -92,7 +93,8 @@ final class TwoFactorFake implements TwoFactorService
     }
 
     /**
-     * Make every verify() and attempt() succeed via TOTP (the default).
+     * Make every verify() and attempt() succeed via TOTP (the default). attempt()
+     * still fails a user without confirmed two-factor, like the real action.
      */
     public function accept(): self
     {
@@ -466,6 +468,13 @@ final class TwoFactorFake implements TwoFactorService
     private function outcome(TwoFactorAuthenticatable $user, #[SensitiveParameter] string $code): VerificationResult
     {
         $stored = count($user->twoFactorRecoveryCodes());
+
+        // Like the real action: only a confirmed enrolment can pass a challenge,
+        // whatever outcome is programmed, so a host test never passes a user the
+        // real flow would refuse.
+        if (! $user->hasTwoFactorEnabled()) {
+            return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored);
+        }
 
         if ($this->replays) {
             return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored, replayed: true);

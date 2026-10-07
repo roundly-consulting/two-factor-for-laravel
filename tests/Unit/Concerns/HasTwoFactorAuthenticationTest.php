@@ -40,7 +40,7 @@ it('confirms, verifies and disables through the trait verbs', function (): void 
 
 it('reduces the facade attempt to a bool', function (): void {
     $fake = TwoFactor::fake()->accept();
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
 
     expect($user->verifyTwoFactorCode('123456'))->toBeTrue();
     $fake->assertVerifiedFor($user);
@@ -48,7 +48,7 @@ it('reduces the facade attempt to a bool', function (): void {
 
 it('attempts a code through the trait verb and reports the method', function (): void {
     $fake = TwoFactor::fake()->acceptRecoveryCode()->withRemainingRecoveryCodes(3);
-    $user = TwoFactorUser::factory()->create();
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
 
     $result = $user->attemptTwoFactorCode('ABCDE-FGHIJ');
 

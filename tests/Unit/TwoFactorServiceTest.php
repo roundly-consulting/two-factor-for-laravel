@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Carbon;
 use RoundlyConsulting\Crypto\Codec\Base32;
+use RoundlyConsulting\Crypto\Otp\InvalidOtpParameterException;
 use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
 use RoundlyConsulting\Crypto\Otp\Totp;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
@@ -12,6 +13,8 @@ use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorSecretException;
+use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
@@ -207,6 +210,44 @@ it('surfaces a malformed secret as an invalid base32 exception when verifying', 
 it('surfaces a malformed secret as an invalid base32 exception when generating a code', function (): void {
     TwoFactor::currentCode('MZXW6YTB01');
 })->throws(InvalidBase32Exception::class);
+
+/**
+ * A secret that is valid base32 but no usable key (empty, under 10 bytes, all zero bytes)
+ * is a secret problem, not a window problem, and crypto's own exceptions never escape the
+ * boundary: every path reports it as a two-factor secret exception.
+ */
+it('reports an unusable secret as a secret exception on every primitive', function (Closure $call, string $message): void {
+    $thrown = null;
+
+    try {
+        $call();
+    } catch (Throwable $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->toBeInstanceOf(TwoFactorException::class)
+        ->not->toBeInstanceOf(InvalidTwoFactorConfigException::class)
+        ->and($thrown === null ? null : $thrown::class)->toBe(InvalidTwoFactorSecretException::class)
+        ->and($thrown?->getMessage())->toContain($message)
+        ->and($thrown?->getPrevious())->toBeInstanceOf(InvalidOtpParameterException::class);
+})->with([
+    'verify, all-zero secret' => [fn () => TwoFactor::verify('AAAAAAAAAAAAAAAA', '123456'), 'all zero bytes'],
+    'verify, short secret, explicit window' => [fn () => TwoFactor::verify('MZXW6YTB', '123456', 0), 'at least 10 bytes'],
+    'currentCode, short secret' => [fn () => TwoFactor::currentCode('AAAAAAAA'), 'at least 10 bytes'],
+    'currentCode, empty secret' => [fn () => TwoFactor::currentCode(''), 'must not be empty'],
+    'provisioningUri, empty secret' => [fn () => TwoFactor::provisioningUri('', 'x'), 'must not be empty'],
+]);
+
+it('surfaces a malformed secret as an invalid base32 exception when building a provisioning uri', function (): void {
+    TwoFactor::provisioningUri('ABC1', 'x');
+})->throws(InvalidBase32Exception::class);
+
+it('reports an unusable stored secret as a secret exception at login', function (): void {
+    [$user] = attemptableUser();
+    $user->setAttribute((string) config('two-factor.columns.secret'), 'MZXW6YTB')->save();
+
+    TwoFactor::for($user->fresh())->attempt('123456');
+})->throws(InvalidTwoFactorSecretException::class);
 
 it('produces a different code per configured algorithm', function (): void {
     $secret = testSecret();

@@ -15,6 +15,7 @@ use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidBase32Exception;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorSecretException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 use SensitiveParameter;
@@ -56,6 +57,7 @@ final readonly class TwoFactorManager implements TwoFactorService
 
     /**
      * @throws InvalidBase32Exception when the secret is not valid base32
+     * @throws InvalidTwoFactorSecretException when the secret is no usable key
      */
     public function currentCode(#[SensitiveParameter] string $secret, ?int $timestamp = null): string
     {
@@ -63,6 +65,8 @@ final readonly class TwoFactorManager implements TwoFactorService
             return $this->totp()->codeAt($secret, $timestamp);
         } catch (InvalidEncodingException $e) {
             throw InvalidBase32Exception::fromCodec($e);
+        } catch (InvalidOtpParameterException $e) {
+            throw InvalidTwoFactorSecretException::fromOtp($e);
         }
     }
 
@@ -70,6 +74,7 @@ final readonly class TwoFactorManager implements TwoFactorService
      * @return int|false the matched timestep, or false
      *
      * @throws InvalidBase32Exception when the secret is not valid base32
+     * @throws InvalidTwoFactorSecretException when the secret is no usable key
      * @throws InvalidTwoFactorConfigException when the window is out of range
      */
     public function verify(
@@ -84,26 +89,35 @@ final readonly class TwoFactorManager implements TwoFactorService
             return $this->totp()->verify($secret, $code, $window);
         } catch (InvalidEncodingException $e) {
             throw InvalidBase32Exception::fromCodec($e);
-        } catch (InvalidOtpParameterException) {
-            // The only parameter the caller can still push out of range here is
-            // the explicit window; digits/period came through ConfigGuard.
-            throw InvalidTwoFactorConfigException::window($window);
+        } catch (InvalidOtpParameterException $e) {
+            // Window, digits and period are all bounded by ConfigGuard before they
+            // get here, so whatever the primitive still refuses is the secret.
+            throw InvalidTwoFactorSecretException::fromOtp($e);
         }
     }
 
+    /**
+     * @throws InvalidBase32Exception when the secret is not valid base32
+     * @throws InvalidTwoFactorSecretException when the secret is empty
+     */
     public function provisioningUri(
         #[SensitiveParameter] string $secret,
         string $label,
         ?string $issuer = null,
     ): string {
-        return ProvisioningUri::totp(
-            $secret,
-            $label,
-            ConfigGuard::issuer($issuer),
-            ConfigGuard::algorithm(),
-            ConfigGuard::digits(),
-            ConfigGuard::period(),
-        );
+        $issuer = ConfigGuard::issuer($issuer);
+        $algorithm = ConfigGuard::algorithm();
+        $digits = ConfigGuard::digits();
+        $period = ConfigGuard::period();
+
+        try {
+            return ProvisioningUri::totp($secret, $label, $issuer, $algorithm, $digits, $period);
+        } catch (InvalidEncodingException $e) {
+            throw InvalidBase32Exception::fromCodec($e);
+        } catch (InvalidOtpParameterException $e) {
+            // Digits and period came through ConfigGuard: only the secret is left.
+            throw InvalidTwoFactorSecretException::fromOtp($e);
+        }
     }
 
     /**

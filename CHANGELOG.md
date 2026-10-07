@@ -6,8 +6,19 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Changed
+
+- Requires `roundly-consulting/crypto-for-laravel` `^1.0.1`: that release refuses empty, short
+  (under 10 bytes) and all-zero OTP secrets, which this package now reports as
+  `InvalidTwoFactorSecretException`.
+
 ### Fixed
 
+- A secret that is valid base32 but no usable key (empty, under 10 bytes or all zero bytes) now
+  throws the new `InvalidTwoFactorSecretException` from `verify()`, `currentCode()`,
+  `provisioningUri()` and `attempt()`. `verify()` used to report it as an invalid `window`, and
+  `currentCode()` / `provisioningUri()` leaked crypto's own exceptions (`provisioningUri()` now
+  also throws `InvalidBase32Exception` for malformed base32).
 - `TwoFactor::verify()` now bounds an explicit `$window` to 0–2 steps, like the configured
   `window`; a wider one throws `InvalidTwoFactorConfigException` instead of being honoured up to
   ±10 steps.

@@ -76,8 +76,16 @@ final class ConfigGuard
 
     public static function window(): int
     {
-        $window = self::integer('two-factor.window', config('two-factor.window'), 1);
+        return self::assertWindow(self::integer('two-factor.window', config('two-factor.window'), 1));
+    }
 
+    /**
+     * Bound a drift window — from config or from an explicit caller argument — to
+     * 0–2 steps, so no path can widen verification past the package's bound (crypto
+     * alone would accept up to 10).
+     */
+    public static function assertWindow(int $window): int
+    {
         if ($window < 0 || $window > 2) {
             throw InvalidTwoFactorConfigException::window($window);
         }

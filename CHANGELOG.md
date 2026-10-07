@@ -6,6 +6,12 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Fixed
+
+- `TwoFactor::verify()` now bounds an explicit `$window` to 0–2 steps, like the configured
+  `window`; a wider one throws `InvalidTwoFactorConfigException` instead of being honoured up to
+  ±10 steps.
+
 ## 1.0.0 - 2026-10-03
 
 Initial public release.

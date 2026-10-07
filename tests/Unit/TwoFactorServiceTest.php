@@ -176,6 +176,30 @@ it('rejects an explicit window the otp primitive will not honour', function (): 
     TwoFactor::verify(testSecret(), '123456', 50);
 })->throws(InvalidTwoFactorConfigException::class);
 
+/**
+ * The exception says "expected 0–2", so an explicit window has to be bound by that same
+ * rule, like an explicit secret length. Crypto alone accepts up to 10 steps (±5 minutes).
+ */
+it('bounds an explicit window by the same 0–2 rule as the configured one', function (int $window): void {
+    $secret = testSecret();
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+
+    expect(fn (): int|false => TwoFactor::verify($secret, TwoFactor::currentCode($secret, 1_700_000_000 - 150), $window))
+        ->toThrow(InvalidTwoFactorConfigException::class, "({$window})");
+
+    Carbon::setTestNow();
+})->with([3, 5, 10, -1]);
+
+it('honours an explicit window inside the bound', function (): void {
+    $secret = testSecret();
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+
+    expect(TwoFactor::verify($secret, TwoFactor::currentCode($secret, 1_700_000_000 - 60), 2))->toBe(56_666_664)
+        ->and(TwoFactor::verify($secret, TwoFactor::currentCode($secret, 1_700_000_000 - 60), 0))->toBeFalse();
+
+    Carbon::setTestNow();
+});
+
 it('surfaces a malformed secret as an invalid base32 exception when verifying', function (): void {
     TwoFactor::verify('MZXW6YTB01', '123456'); // 0 and 1 are outside the alphabet
 })->throws(InvalidBase32Exception::class);

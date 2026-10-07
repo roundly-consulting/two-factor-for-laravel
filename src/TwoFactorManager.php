@@ -77,7 +77,8 @@ final readonly class TwoFactorManager implements TwoFactorService
         #[SensitiveParameter] string $code,
         ?int $window = null,
     ): int|false {
-        $window ??= ConfigGuard::window();
+        // Bound an explicit caller window by the same rule as the configured one.
+        $window = $window === null ? ConfigGuard::window() : ConfigGuard::assertWindow($window);
 
         try {
             return $this->totp()->verify($secret, $code, $window);

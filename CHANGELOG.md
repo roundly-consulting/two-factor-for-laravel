@@ -6,6 +6,12 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Fixed
+
+- `php artisan about` no longer crashes when `two-factor.replay_guard` holds an array, an object or
+  a bool. Such a value now renders as `invalid (<type>)` on its row, and so do a wrong-typed
+  `two-factor.algorithm` and `two-factor.recovery_codes.storage`, which used to print their default.
+
 ## 1.1.0 - 2026-10-07
 
 ### Changed

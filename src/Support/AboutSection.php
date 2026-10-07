@@ -67,7 +67,7 @@ final class AboutSection
                 : 'cache (custom store)';
         }
 
-        return (string) $mode;
+        return self::display($mode);
     }
 
     private static function attemptLimit(): string
@@ -109,9 +109,19 @@ final class AboutSection
 
     private static function string(string $key, string $default): string
     {
-        $value = self::value($key) ?? $default;
+        return self::display(self::value($key) ?? $default);
+    }
 
-        return is_scalar($value) ? (string) $value : $default;
+    /**
+     * A config value as text. One the readers reject by type — an array, an object,
+     * a bool — renders as an `invalid (<type>)` marker: casting it would crash the
+     * whole `about` command, and printing the default would hide the misconfiguration.
+     */
+    private static function display(mixed $value): string
+    {
+        return is_scalar($value) && ! is_bool($value)
+            ? (string) $value
+            : 'invalid ('.get_debug_type($value).')';
     }
 
     private static function columns(): string

@@ -173,3 +173,20 @@ it('reports enum-case config values as the readers resolve them', function (stri
     'algorithm Sha512' => ['two-factor.algorithm', OtpAlgorithm::Sha512, '/Algorithm\s*\.*\s*sha512/'],
     'storage Encrypted' => ['two-factor.recovery_codes.storage', RecoveryCodeStorage::Encrypted, '/8 encrypted codes/'],
 ]);
+
+/**
+ * `about` is the diagnostic for a misconfigured host, so a value the readers would reject
+ * by type — an array, an object, a bool — renders as an `invalid (<type>)` marker on its
+ * row. It never crashes the whole command and never prints the default in its place.
+ */
+it('renders a config value of the wrong type as invalid instead of crashing about', function (string $key, mixed $value, string $expected): void {
+    config([$key => $value]);
+
+    expect(aboutOutput())->toMatch($expected);
+})->with([
+    'replay guard array' => ['two-factor.replay_guard', ['x'], '/Replay guard\s*\.*\s*invalid \(array\)/'],
+    'replay guard object' => ['two-factor.replay_guard', new stdClass, '/Replay guard\s*\.*\s*invalid \(stdClass\)/'],
+    'replay guard bool' => ['two-factor.replay_guard', false, '/Replay guard\s*\.*\s*invalid \(bool\)/'],
+    'algorithm array' => ['two-factor.algorithm', ['sha256'], '/Algorithm\s*\.*\s*invalid \(array\)/'],
+    'storage object' => ['two-factor.recovery_codes.storage', new stdClass, '/8 invalid \(stdClass\) codes/'],
+]);

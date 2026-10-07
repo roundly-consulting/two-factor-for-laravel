@@ -3,7 +3,10 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Artisan;
+use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
+use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
+use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
 /**
@@ -154,3 +157,19 @@ it('reports a disabled attempt limiter as the host taking over', function (): vo
 
     expect(aboutOutput())->toContain('OFF (host throttling)');
 });
+
+/**
+ * Enum cases are a documented config value the readers accept, so the diagnostic has to
+ * render them as the readers resolve them — never crash `about` or print the default.
+ */
+it('reports enum-case config values as the readers resolve them', function (string $key, mixed $value, string $expected): void {
+    config([$key => $value]);
+
+    expect(aboutOutput())->toMatch($expected);
+})->with([
+    'replay guard Column' => ['two-factor.replay_guard', ReplayGuardMode::Column, '/Replay guard\s*\.*\s*column/'],
+    'replay guard Cache' => ['two-factor.replay_guard', ReplayGuardMode::Cache, '/Replay guard\s*\.*\s*cache \(default store\)/'],
+    'replay guard None' => ['two-factor.replay_guard', ReplayGuardMode::None, '/Replay guard\s*\.*\s*OFF/'],
+    'algorithm Sha512' => ['two-factor.algorithm', OtpAlgorithm::Sha512, '/Algorithm\s*\.*\s*sha512/'],
+    'storage Encrypted' => ['two-factor.recovery_codes.storage', RecoveryCodeStorage::Encrypted, '/8 encrypted codes/'],
+]);

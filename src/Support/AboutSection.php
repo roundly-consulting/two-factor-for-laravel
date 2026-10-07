@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace RoundlyConsulting\TwoFactor\Support;
 
+use BackedEnum;
+
 /**
  * The `php artisan about` payload for this package.
  *
@@ -47,14 +49,16 @@ final class AboutSection
 
     private static function replayGuard(): string
     {
-        $mode = config('two-factor.replay_guard');
-
-        if ($mode === null || $mode === 'none') {
+        if (config('two-factor.replay_guard') === null) {
             return 'OFF';
         }
 
         // Blank is not set: the shipped column guard, as ReplayGuardMode resolves it.
         $mode = self::value('two-factor.replay_guard') ?? 'column';
+
+        if ($mode === 'none') {
+            return 'OFF';
+        }
 
         if ($mode === 'cache') {
             // The store's *name* stays out of the output (the jwt secret-safe rule).
@@ -82,10 +86,16 @@ final class AboutSection
     /**
      * The raw value, or null when it is not set — absent, null or blank (`''` or
      * whitespace, a host's `KEY=`) — so a blank key renders as its default here too.
+     * An enum case (a documented config value) reads as its backing value, the way
+     * ConfigGuard resolves it.
      */
     private static function value(string $key): mixed
     {
         $value = config($key);
+
+        if ($value instanceof BackedEnum) {
+            return $value->value;
+        }
 
         return is_string($value) && trim($value) === '' ? null : $value;
     }

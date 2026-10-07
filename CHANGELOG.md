@@ -39,6 +39,9 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
   `start()` can no longer leave two-factor enabled on a secret the user never scanned. It re-checks
   that the row is still pending, writes only `confirmed_at` to that row (unrelated unsaved
   attributes on the passed model are no longer saved with it) and syncs the passed model.
+- `php artisan about` no longer crashes when `two-factor.replay_guard` is set to a
+  `ReplayGuardMode` case, and renders an `OtpAlgorithm` / `RecoveryCodeStorage` case as its value
+  instead of the default.
 
 ## 1.0.0 - 2026-10-03
 

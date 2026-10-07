@@ -217,11 +217,21 @@ final class ConfigGuard
     }
 
     /**
-     * Seconds the cache replay guard keeps the last used timestep (at least one).
+     * Seconds the cache replay guard keeps the last used timestep: at least
+     * (2 × window + 1) × period, the longest a claimed code can still verify. A
+     * shorter entry would expire while the code is still valid, and the same code
+     * would then be accepted again.
      */
     public static function cacheTtl(): int
     {
-        return self::integer('two-factor.cache.ttl', config('two-factor.cache.ttl'), 86_400, min: 1);
+        $ttl = self::integer('two-factor.cache.ttl', config('two-factor.cache.ttl'), 86_400, min: 1);
+        $minimum = (2 * self::window() + 1) * self::period();
+
+        if ($ttl < $minimum) {
+            throw InvalidTwoFactorConfigException::cacheTtl($ttl, $minimum);
+        }
+
+        return $ttl;
     }
 
     /**

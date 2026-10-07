@@ -35,7 +35,7 @@ return [
     'replay_guard' => ReplayGuardMode::Column->value, // 'column' | 'cache' | 'none' (null → none; blank → column)
     'cache' => [
         'store' => env('TWO_FACTOR_CACHE_STORE'), // null/blank → default store (used by cache guard)
-        'ttl' => 60 * 60 * 24,                    // seconds to retain last timestep in cache mode
+        'ttl' => 60 * 60 * 24,                    // seconds to retain last timestep in cache mode (≥ (2 × window + 1) × period)
     ],
 
     // The table the published migration adds the columns to. Other account

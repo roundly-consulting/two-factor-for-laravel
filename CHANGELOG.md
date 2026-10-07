@@ -15,6 +15,10 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
   real action, whatever outcome is programmed — a host test can no longer pass a challenge
   production would refuse. Tests that attempt for an un-enrolled user must enrol them first
   (`TwoFactor::for($user)->start()` then `->confirm('123456')` under the fake).
+- `two-factor.cache.ttl` must now be at least (2 × `window` + 1) × `period` seconds (90 with the
+  defaults); a shorter value throws `InvalidTwoFactorConfigException` when the cache replay guard
+  resolves. A shorter entry expired while the claimed code was still valid, so the cache guard
+  accepted the same code again. The shipped default (86400) is unaffected.
 
 ### Fixed
 

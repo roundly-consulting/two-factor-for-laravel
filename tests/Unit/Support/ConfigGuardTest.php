@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
+use RoundlyConsulting\TwoFactor\Contracts\ReplayGuard;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\AttemptLimit;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
@@ -169,6 +170,40 @@ it('refuses a recovery-code count or cache ttl below one (strict config)', funct
 
     $key === 'two-factor.cache.ttl' ? ConfigGuard::cacheTtl() : ConfigGuard::recoveryCodeCount();
 })->with(['two-factor.recovery_codes.count', 'two-factor.cache.ttl'])->throws(InvalidTwoFactorConfigException::class);
+
+/**
+ * A claimed code stays valid for up to (2 × window + 1) × period seconds. A cache entry
+ * that expires sooner forgets the claim while the code still verifies, so the same code
+ * would be accepted again — the guard fails loudly at resolution instead.
+ */
+it('refuses a cache ttl shorter than a code stays valid', function (int $window, int $period, int $ttl): void {
+    config(['two-factor.window' => $window, 'two-factor.period' => $period, 'two-factor.cache.ttl' => $ttl]);
+
+    expect(fn (): int => ConfigGuard::cacheTtl())
+        ->toThrow(InvalidTwoFactorConfigException::class, 'cache.ttl');
+})->with([
+    'window 1, period 30, ttl 30' => [1, 30, 30],
+    'window 1, period 30, ttl 89' => [1, 30, 89],
+    'window 0, period 30, ttl 29' => [0, 30, 29],
+    'window 2, period 120, ttl 599' => [2, 120, 599],
+]);
+
+it('accepts a cache ttl that covers the whole validity of a code', function (int $window, int $period, int $ttl): void {
+    config(['two-factor.window' => $window, 'two-factor.period' => $period, 'two-factor.cache.ttl' => $ttl]);
+
+    expect(ConfigGuard::cacheTtl())->toBe($ttl);
+})->with([
+    'window 1, period 30, ttl 90' => [1, 30, 90],
+    'window 0, period 30, ttl 30' => [0, 30, 30],
+    'window 2, period 120, ttl 600' => [2, 120, 600],
+]);
+
+it('refuses to resolve the cache replay guard over a too-short ttl', function (): void {
+    config(['two-factor.replay_guard' => 'cache', 'two-factor.cache.ttl' => 30]);
+    app()->forgetInstance(ReplayGuard::class);
+
+    app(ReplayGuard::class);
+})->throws(InvalidTwoFactorConfigException::class, 'cache.ttl');
 
 it('throws on a junk attempt budget instead of reading it as 0 (strict config)', function (array $attempts): void {
     config(['two-factor.attempts' => $attempts]);

@@ -71,6 +71,15 @@ final class InvalidTwoFactorConfigException extends TwoFactorException
         ));
     }
 
+    public static function cacheTtl(int $value, int $minimum): self
+    {
+        return new self(sprintf(
+            'Invalid two-factor "cache.ttl" (%d); expected at least %d seconds, (2 × window + 1) × period, so a claimed code cannot outlive its replay record.',
+            $value,
+            $minimum,
+        ));
+    }
+
     public static function attempts(string $key, int $value): self
     {
         return new self(sprintf(

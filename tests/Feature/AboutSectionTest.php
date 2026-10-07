@@ -7,6 +7,8 @@ use RoundlyConsulting\Crypto\Otp\OtpAlgorithm;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Enums\ReplayGuardMode;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorConfigException;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
 /**
@@ -216,4 +218,40 @@ it('renders a wrong-typed value as invalid on every row instead of a believable 
     'column int' => [['two-factor.columns.secret' => 5], '/Columns\s*\.*\s*invalid \(int\)\s*$/m'],
     'column map string' => [['two-factor.columns' => 'x'], '/Columns\s*\.*\s*invalid \(string\)\s*$/m'],
     'invalid column after a remapped one' => [['two-factor.columns.secret' => 'mfa_secret', 'two-factor.columns.last_used_timestep' => false], '/Columns\s*\.*\s*invalid \(bool\)\s*$/m'],
+]);
+
+/**
+ * A number row and its reader agree on strings: one `ConfigGuard` rejects as not an integer
+ * (`'6abc'`, `'five'`, `'1.5'`, `'+32'`, an overflow, ...) renders as `invalid (string)`,
+ * never as the number a cast would make of it; a canonical integer string it accepts
+ * renders as that number, exactly as before. Each row checks the reader's verdict too, so
+ * the two cannot drift apart.
+ */
+it('renders a number-row string the reader rejects as invalid and one it accepts as the number', function (array $config, string $reader, bool $accepted, string $expected): void {
+    config($config);
+
+    $read = fn (): mixed => ConfigGuard::{$reader}();
+
+    $accepted
+        ? expect($read())->not->toBeNull()
+        : expect($read)->toThrow(InvalidTwoFactorConfigException::class, 'must be an integer');
+
+    expect(aboutOutput())->toMatch($expected);
+})->with([
+    'digits 6abc' => [['two-factor.digits' => '6abc'], 'digits', false, '/Code\s*\.*\s*invalid \(string\) digits every 30s/'],
+    'digits five' => [['two-factor.digits' => 'five'], 'digits', false, '/Code\s*\.*\s*invalid \(string\) digits every 30s/'],
+    'digits 1.5' => [['two-factor.digits' => '1.5'], 'digits', false, '/Code\s*\.*\s*invalid \(string\) digits every 30s/'],
+    'period 30s' => [['two-factor.period' => '30s'], 'period', false, '/Code\s*\.*\s*6 digits every invalid \(string\)\s*$/m'],
+    'window 1e0' => [['two-factor.window' => '1e0'], 'window', false, '/Drift window\s*\.*\s*invalid \(string\) timesteps/'],
+    'secret length +32' => [['two-factor.secret_length' => '+32'], 'secretLength', false, '/Secret length\s*\.*\s*invalid \(string\) base32 chars/'],
+    'secret length overflow' => [['two-factor.secret_length' => '99999999999999999999'], 'secretLength', false, '/Secret length\s*\.*\s*invalid \(string\) base32 chars/'],
+    'recovery code count 0x8' => [['two-factor.recovery_codes.count' => '0x8'], 'recoveryCodeCount', false, '/Recovery codes\s*\.*\s*invalid \(string\) hashed codes/'],
+    'attempts max five' => [['two-factor.attempts.max' => 'five'], 'attemptLimit', false, '/Attempt limit\s*\.*\s*invalid \(string\) attempts \/ 60s lockout/'],
+    'attempts decay 60.0' => [['two-factor.attempts.decay' => '60.0'], 'attemptLimit', false, '/Attempt limit\s*\.*\s*5 attempts \/ invalid \(string\) lockout/'],
+    'digits 8' => [['two-factor.digits' => '8'], 'digits', true, '/Code\s*\.*\s*8 digits every 30s/'],
+    'period padded 45' => [['two-factor.period' => ' 45 '], 'period', true, '/Code\s*\.*\s*6 digits every 45s/'],
+    'window 2' => [['two-factor.window' => '2'], 'window', true, '/Drift window\s*\.*\s*±2 timesteps/'],
+    'secret length 48' => [['two-factor.secret_length' => '48'], 'secretLength', true, '/Secret length\s*\.*\s*48 base32 chars/'],
+    'recovery code count 10' => [['two-factor.recovery_codes.count' => '10'], 'recoveryCodeCount', true, '/Recovery codes\s*\.*\s*10 hashed codes/'],
+    'attempts 3 / 120' => [['two-factor.attempts.max' => '3', 'two-factor.attempts.decay' => '120'], 'attemptLimit', true, '/Attempt limit\s*\.*\s*3 attempts \/ 120s lockout/'],
 ]);

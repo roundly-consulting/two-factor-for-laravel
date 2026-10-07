@@ -6,6 +6,13 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Fixed
+
+- `php artisan about` now shows `invalid (string)` on a number row (code, drift window, secret
+  length, recovery code count, attempt limit) whose config string is not an integer, such as
+  `'6abc'`, `'five'` or `'1.5'`. It used to print the number a cast made of it (`6`, `0`, `1`). The
+  row follows the same rule as the config reader, so integer strings like `'8'` render as before.
+
 ## 1.1.2 - 2026-10-07
 
 ### Fixed

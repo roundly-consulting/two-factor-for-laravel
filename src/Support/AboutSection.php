@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Support;
 
 use BackedEnum;
+use RoundlyConsulting\PackageToolkit\Exceptions\InvalidConfigurationException;
+use RoundlyConsulting\PackageToolkit\Support\Config;
 
 /**
  * The `php artisan about` payload for this package.
@@ -18,8 +20,9 @@ use BackedEnum;
  * Values are read raw rather than through {@see ConfigGuard} so `about` still
  * renders on a misconfigured host instead of throwing at the diagnostic that
  * would have explained the misconfiguration. A value the readers reject by type
- * renders as `invalid (<type>)` on its row — never as the default or as a
- * believable presence report that would hide the misconfiguration.
+ * — or, on a number row, a string that is not an integer (`'6abc'`, `'1.5'`) —
+ * renders as `invalid (<type>)` on its row — never as the default, a cast number
+ * or a believable presence report that would hide the misconfiguration.
  */
 final class AboutSection
 {
@@ -114,17 +117,22 @@ final class AboutSection
     }
 
     /**
-     * An integer setting, through `$format` when it is one the reader takes by type
-     * — an int, or a string (cast as before) — and the default when not set. Any
-     * other type renders as the `invalid (<type>)` marker in its place.
+     * An integer setting, through `$format`: the default when not set, else the value
+     * parsed by the very rule {@see ConfigGuard} reads it with — an int or a canonical
+     * integer string. Anything that rule rejects (`'five'`, `'1.5'`, `'+5'`, an
+     * overflow, a float, an array, ...) renders as the `invalid (<type>)` marker in
+     * its place, never as a cast number. Range bounds stay out: an out-of-range number
+     * renders as itself.
      */
     private static function integer(string $key, int $default, string $format = '%d'): string
     {
-        $value = self::raw($key) ?? $default;
+        $value = config($key);
 
-        return is_int($value) || is_string($value)
-            ? sprintf($format, (int) $value)
-            : self::invalid($value);
+        try {
+            return sprintf($format, Config::for([$key => $value])->integer($key, $default));
+        } catch (InvalidConfigurationException) {
+            return self::invalid($value);
+        }
     }
 
     private static function string(string $key, string $default): string

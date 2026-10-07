@@ -190,3 +190,30 @@ it('renders a config value of the wrong type as invalid instead of crashing abou
     'algorithm array' => ['two-factor.algorithm', ['sha256'], '/Algorithm\s*\.*\s*invalid \(array\)/'],
     'storage object' => ['two-factor.recovery_codes.storage', new stdClass, '/8 invalid \(stdClass\) codes/'],
 ]);
+
+/**
+ * The same holds on every other row: a value the readers reject by type renders as
+ * `invalid (<type>)` — never as the default an integer row falls back to, nor as a
+ * believable presence report (`SET`, `cache (custom store)`, `remapped`).
+ */
+it('renders a wrong-typed value as invalid on every row instead of a believable default', function (array $config, string $expected): void {
+    config($config);
+
+    expect(aboutOutput())->toMatch($expected);
+})->with([
+    'digits array' => [['two-factor.digits' => ['x']], '/Code\s*\.*\s*invalid \(array\) digits every 30s/'],
+    'digits bool' => [['two-factor.digits' => true], '/Code\s*\.*\s*invalid \(bool\) digits every 30s/'],
+    'period object' => [['two-factor.period' => new stdClass], '/Code\s*\.*\s*6 digits every invalid \(stdClass\)\s*$/m'],
+    'window array' => [['two-factor.window' => ['x']], '/Drift window\s*\.*\s*invalid \(array\) timesteps/'],
+    'secret length float' => [['two-factor.secret_length' => 32.0], '/Secret length\s*\.*\s*invalid \(float\) base32 chars/'],
+    'recovery code count array' => [['two-factor.recovery_codes.count' => ['x']], '/Recovery codes\s*\.*\s*invalid \(array\) hashed codes/'],
+    'attempts bool' => [['two-factor.attempts' => false], '/Attempt limit\s*\.*\s*invalid \(bool\)\s*$/m'],
+    'attempts string' => [['two-factor.attempts' => 'off'], '/Attempt limit\s*\.*\s*invalid \(string\)\s*$/m'],
+    'attempts max array' => [['two-factor.attempts.max' => ['x']], '/Attempt limit\s*\.*\s*invalid \(array\) attempts \/ 60s lockout/'],
+    'attempts decay object' => [['two-factor.attempts.decay' => new stdClass], '/Attempt limit\s*\.*\s*5 attempts \/ invalid \(stdClass\) lockout/'],
+    'issuer array' => [['two-factor.issuer' => ['x']], '/Issuer\s*\.*\s*invalid \(array\)\s*$/m'],
+    'cache store int' => [['two-factor.replay_guard' => 'cache', 'two-factor.cache.store' => 5], '/Replay guard\s*\.*\s*cache \(invalid \(int\) store\)/'],
+    'column int' => [['two-factor.columns.secret' => 5], '/Columns\s*\.*\s*invalid \(int\)\s*$/m'],
+    'column map string' => [['two-factor.columns' => 'x'], '/Columns\s*\.*\s*invalid \(string\)\s*$/m'],
+    'invalid column after a remapped one' => [['two-factor.columns.secret' => 'mfa_secret', 'two-factor.columns.last_used_timestep' => false], '/Columns\s*\.*\s*invalid \(bool\)\s*$/m'],
+]);

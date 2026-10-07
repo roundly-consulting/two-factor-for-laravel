@@ -6,6 +6,14 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Fixed
+
+- `php artisan about` now shows `invalid (<type>)` on every row whose config value has the wrong
+  type, instead of a believable default. Affected: the code, drift window, secret length, recovery
+  code count and attempt limit numbers, a non-array `two-factor.attempts`, a non-string
+  `two-factor.issuer` (was `SET`), `two-factor.cache.store` (was `custom store`) and
+  `two-factor.columns.*` (was `remapped`). Correct values render exactly as before.
+
 ## 1.1.1 - 2026-10-07
 
 ### Fixed

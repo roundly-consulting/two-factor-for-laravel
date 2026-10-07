@@ -17,7 +17,9 @@ use BackedEnum;
  *
  * Values are read raw rather than through {@see ConfigGuard} so `about` still
  * renders on a misconfigured host instead of throwing at the diagnostic that
- * would have explained the misconfiguration.
+ * would have explained the misconfiguration. A value the readers reject by type
+ * renders as `invalid (<type>)` on its row — never as the default or as a
+ * believable presence report that would hide the misconfiguration.
  */
 final class AboutSection
 {
@@ -29,16 +31,16 @@ final class AboutSection
         return [
             'Algorithm' => self::string('two-factor.algorithm', 'sha1'),
             'Code' => sprintf(
-                '%d digits every %ds',
-                self::int('two-factor.digits', 6),
-                self::int('two-factor.period', 30),
+                '%s digits every %s',
+                self::integer('two-factor.digits', 6),
+                self::integer('two-factor.period', 30, '%ds'),
             ),
-            'Drift window' => sprintf('±%d timesteps', self::int('two-factor.window', 1)),
-            'Secret length' => sprintf('%d base32 chars', self::int('two-factor.secret_length', 32)),
-            'Issuer' => self::value('two-factor.issuer') === null ? 'DEFAULT (app.name)' : 'SET',
+            'Drift window' => self::integer('two-factor.window', 1, '±%d').' timesteps',
+            'Secret length' => self::integer('two-factor.secret_length', 32).' base32 chars',
+            'Issuer' => self::presence('two-factor.issuer', 'DEFAULT (app.name)', 'SET'),
             'Recovery codes' => sprintf(
-                '%d %s codes',
-                self::int('two-factor.recovery_codes.count', 8),
+                '%s %s codes',
+                self::integer('two-factor.recovery_codes.count', 8),
                 self::string('two-factor.recovery_codes.storage', 'hashed'),
             ),
             'Replay guard' => self::replayGuard(),
@@ -62,9 +64,7 @@ final class AboutSection
 
         if ($mode === 'cache') {
             // The store's *name* stays out of the output (the jwt secret-safe rule).
-            return self::value('two-factor.cache.store') === null
-                ? 'cache (default store)'
-                : 'cache (custom store)';
+            return sprintf('cache (%s store)', self::presence('two-factor.cache.store', 'default', 'custom'));
         }
 
         return self::display($mode);
@@ -72,44 +72,79 @@ final class AboutSection
 
     private static function attemptLimit(): string
     {
-        if (config('two-factor.attempts') === null) {
+        $attempts = config('two-factor.attempts');
+
+        if ($attempts === null) {
             return 'OFF (host throttling)';
         }
 
+        // Only null switches the limiter off; a blank is not set (the shipped limits),
+        // and any other non-array — `false`, `'off'`, `0` — is one the reader rejects.
+        if (! is_array($attempts) && self::raw('two-factor.attempts') !== null) {
+            return self::invalid($attempts);
+        }
+
         return sprintf(
-            '%d attempts / %ds lockout',
-            self::int('two-factor.attempts.max', 5),
-            self::int('two-factor.attempts.decay', 60),
+            '%s attempts / %s lockout',
+            self::integer('two-factor.attempts.max', 5),
+            self::integer('two-factor.attempts.decay', 60, '%ds'),
         );
     }
 
     /**
      * The raw value, or null when it is not set — absent, null or blank (`''` or
      * whitespace, a host's `KEY=`) — so a blank key renders as its default here too.
-     * An enum case (a documented config value) reads as its backing value, the way
-     * ConfigGuard resolves it.
      */
-    private static function value(string $key): mixed
+    private static function raw(string $key): mixed
     {
         $value = config($key);
-
-        if ($value instanceof BackedEnum) {
-            return $value->value;
-        }
 
         return is_string($value) && trim($value) === '' ? null : $value;
     }
 
-    private static function int(string $key, int $default): int
+    /**
+     * {@see self::raw()} for an enum-backed key: an enum case (a documented config
+     * value) reads as its backing value, the way ConfigGuard resolves it.
+     */
+    private static function value(string $key): mixed
     {
-        $value = self::value($key) ?? $default;
+        $value = self::raw($key);
 
-        return is_scalar($value) ? (int) $value : $default;
+        return $value instanceof BackedEnum ? $value->value : $value;
+    }
+
+    /**
+     * An integer setting, through `$format` when it is one the reader takes by type
+     * — an int, or a string (cast as before) — and the default when not set. Any
+     * other type renders as the `invalid (<type>)` marker in its place.
+     */
+    private static function integer(string $key, int $default, string $format = '%d'): string
+    {
+        $value = self::raw($key) ?? $default;
+
+        return is_int($value) || is_string($value)
+            ? sprintf($format, (int) $value)
+            : self::invalid($value);
     }
 
     private static function string(string $key, string $default): string
     {
         return self::display(self::value($key) ?? $default);
+    }
+
+    /**
+     * A string setting whose value stays out of the output: `$unset` when not set,
+     * `$set` for a string, the `invalid (<type>)` marker for anything else.
+     */
+    private static function presence(string $key, string $unset, string $set): string
+    {
+        $value = self::raw($key);
+
+        return match (true) {
+            $value === null => $unset,
+            is_string($value) => $set,
+            default => self::invalid($value),
+        };
     }
 
     /**
@@ -121,11 +156,22 @@ final class AboutSection
     {
         return is_scalar($value) && ! is_bool($value)
             ? (string) $value
-            : 'invalid ('.get_debug_type($value).')';
+            : self::invalid($value);
+    }
+
+    private static function invalid(mixed $value): string
+    {
+        return 'invalid ('.get_debug_type($value).')';
     }
 
     private static function columns(): string
     {
+        $map = config('two-factor.columns');
+
+        if (! is_array($map) && self::raw('two-factor.columns') !== null) {
+            return self::invalid($map);
+        }
+
         $default = [
             'secret' => 'two_factor_secret',
             'recovery_codes' => 'two_factor_recovery_codes',
@@ -133,12 +179,20 @@ final class AboutSection
             'last_used_timestep' => 'two_factor_last_used_timestep',
         ];
 
+        $remapped = false;
+
+        // Every name is checked before reporting a remap: an invalid one makes the
+        // reader throw, so it outranks a valid remap elsewhere in the map.
         foreach ($default as $column => $name) {
-            if ((self::value("two-factor.columns.{$column}") ?? $name) !== $name) {
-                return 'remapped';
+            $value = self::raw("two-factor.columns.{$column}") ?? $name;
+
+            if (! is_string($value)) {
+                return self::invalid($value);
             }
+
+            $remapped = $remapped || $value !== $name;
         }
 
-        return 'default';
+        return $remapped ? 'remapped' : 'default';
     }
 }

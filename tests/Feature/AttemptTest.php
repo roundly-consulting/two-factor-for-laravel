@@ -16,6 +16,7 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
+use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorCodeException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
@@ -403,4 +404,69 @@ it('fails closed when a rival spends the matched recovery code before the lock',
         ->and($user->fresh()?->twoFactorRecoveryCodes())->toHaveCount(7);
 
     Event::assertNotDispatched(RecoveryCodeConsumed::class);
+});
+
+/**
+ * People copy a code as "123 456" or read it out as "123-456". Spaces and dashes are
+ * stripped only when exactly the configured number of digits remains — one-to-one, so
+ * nothing widens — and anything else reaches verification as typed.
+ */
+it('accepts a totp code typed with spaces or dashes', function (string $format, int $digits): void {
+    config(['two-factor.digits' => $digits]);
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    [$user, $setup] = enrolledUserWithSetup();
+    $code = TwoFactor::currentCode($setup->secret);
+
+    $typed = sprintf($format, substr($code, 0, 3), substr($code, 3));
+
+    expect(TwoFactor::for($user)->attempt($typed))
+        ->verified->toBeTrue()
+        ->method->toBe(TwoFactorMethod::Totp);
+
+    Carbon::setTestNow();
+})->with([
+    'space' => ['%s %s'],
+    'dash' => ['%s-%s'],
+    'padded' => [' %s%s '],
+    'spaced dash' => ['%s - %s'],
+])->with(['6 digits' => [6], '8 digits' => [8]]);
+
+it('still refuses a typed code that is not exactly the configured digits once stripped', function (string $typed): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    [$user] = enrolledUserWithSetup();
+
+    expect(TwoFactor::for($user)->attempt($typed)->verified)->toBeFalse();
+
+    Carbon::setTestNow();
+})->with(['12 456', '1234-5678', 'abc 123', '12_3456']);
+
+it('confirms an enrolment with a code typed with a space or a dash', function (string $format): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+    $code = TwoFactor::currentCode($setup->secret);
+
+    TwoFactor::for($user)->confirm(sprintf($format, substr($code, 0, 3), substr($code, 3)));
+
+    expect($user->fresh()?->hasTwoFactorEnabled())->toBeTrue();
+
+    Carbon::setTestNow();
+})->with(['%s %s', '%s-%s']);
+
+it('refuses to confirm a typed code that is not a code once stripped', function (): void {
+    $user = TwoFactorUser::factory()->create();
+    app(StartEnrolment::class)->execute($user);
+
+    TwoFactor::for($user)->confirm('12 456');
+})->throws(InvalidTwoFactorCodeException::class);
+
+it('lets the fake accept an exact code typed with a space or a dash, like the real action', function (): void {
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
+    $fake = TwoFactor::fake()->acceptCode('424242');
+
+    expect(TwoFactor::for($user)->attempt('424 242')->verified)->toBeTrue()
+        ->and(TwoFactor::for($user)->attempt('424-242')->verified)->toBeTrue()
+        ->and(TwoFactor::for($user)->attempt('42 424')->verified)->toBeFalse()
+        // The bare primitive takes the code as typed, under the fake too.
+        ->and($fake->verify('secret', '424 242'))->toBeFalse();
 });

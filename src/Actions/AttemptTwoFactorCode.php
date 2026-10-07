@@ -21,6 +21,7 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
+use RoundlyConsulting\TwoFactor\Support\TotpInput;
 use SensitiveParameter;
 
 /**
@@ -60,7 +61,9 @@ final readonly class AttemptTwoFactorCode
 
         $this->countAttempt($user, $limit, $key);
 
-        $timestep = $this->twoFactor->verify($secret, $code);
+        // A code typed as "123 456" or "123-456" is verified as its digits; the
+        // recovery fallback below still gets the code exactly as typed.
+        $timestep = $this->twoFactor->verify($secret, TotpInput::normalize($code));
 
         if ($timestep !== false) {
             // A replay stays counted, like any other failure.

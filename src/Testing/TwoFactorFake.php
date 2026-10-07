@@ -18,6 +18,7 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAssertionFailedException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
+use RoundlyConsulting\TwoFactor\Support\TotpInput;
 use RoundlyConsulting\TwoFactor\UserTwoFactor;
 use SensitiveParameter;
 
@@ -497,7 +498,9 @@ final class TwoFactorFake implements TwoFactorService
             return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored, replayed: true);
         }
 
-        if (! $this->passes($code)) {
+        // Like the real action, a code typed as "123 456" or "123-456" counts as
+        // its digits (the bare verify() primitive still takes it as typed).
+        if (! $this->passes($code) && ! $this->passes(TotpInput::normalize($code))) {
             $this->dispatch(new TwoFactorVerificationFailed($user));
 
             return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored);

@@ -46,6 +46,11 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
   holding the user-row lock (roughly 0.5–1.8 s per wrong code at bcrypt cost 10–12). The candidate
   is matched before the lock; under the lock only the matched entry is re-confirmed, so a code
   still can't be spent twice.
+- `attempt()` and `confirm()` accept a TOTP code typed with spaces or dashes (`123 456`,
+  `123-456`): they are stripped when exactly the configured number of digits remains, so a
+  correctly read code no longer fails and costs the user a limiter attempt. Anything else is
+  verified as typed, recovery-code matching is unchanged, and the bare `TwoFactor::verify()` still
+  takes the code as given. `TwoFactor::fake()` does the same in `attempt()`.
 
 ## 1.0.0 - 2026-10-03
 

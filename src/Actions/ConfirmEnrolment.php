@@ -14,6 +14,7 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorConfirmed;
 use RoundlyConsulting\TwoFactor\Exceptions\InvalidTwoFactorCodeException;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorNotPendingException;
 use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
+use RoundlyConsulting\TwoFactor\Support\TotpInput;
 use SensitiveParameter;
 
 /**
@@ -68,7 +69,8 @@ final readonly class ConfirmEnrolment
                 throw TwoFactorNotPendingException::make();
             }
 
-            $timestep = $this->twoFactor->verify((string) $locked->twoFactorSecret(), $code);
+            // A code typed as "123 456" or "123-456" is verified as its digits.
+            $timestep = $this->twoFactor->verify((string) $locked->twoFactorSecret(), TotpInput::normalize($code));
 
             if ($timestep === false) {
                 throw InvalidTwoFactorCodeException::make();

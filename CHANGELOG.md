@@ -6,6 +6,8 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-07
+
 ### Changed
 
 - Requires `roundly-consulting/crypto-for-laravel` `^1.0.1`: that release refuses empty, short
@@ -19,6 +21,9 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
   defaults); a shorter value throws `InvalidTwoFactorConfigException` when the cache replay guard
   resolves. A shorter entry expired while the claimed code was still valid, so the cache guard
   accepted the same code again. The shipped default (86400) is unaffected.
+- Documentation: the README hero image uses an absolute URL, so it renders on Packagist and other
+  sites.
+- Maintenance: `composer.json` `homepage` and `support.docs` link to the package documentation.
 
 ### Fixed
 

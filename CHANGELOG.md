@@ -6,6 +6,8 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+## 1.1.1 - 2026-10-07
+
 ### Fixed
 
 - `php artisan about` no longer crashes when `two-factor.replay_guard` holds an array, an object or

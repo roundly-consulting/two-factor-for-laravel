@@ -5,13 +5,19 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Testing;
 
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use RoundlyConsulting\Crypto\Hash\ConstantTime;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorAuthenticatable;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\VerificationResult;
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
+use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorAssertionFailedException;
+use RoundlyConsulting\TwoFactor\Support\ConfigGuard;
 use RoundlyConsulting\TwoFactor\UserTwoFactor;
 use SensitiveParameter;
 
@@ -21,7 +27,11 @@ use SensitiveParameter;
  * (accept/acceptRecoveryCode/reject/replay/acceptCode) and every
  * `for($user)->attempt()` is recorded so a host can assert its 2FA flow without
  * freezing the clock or threading real secrets. Like the real action, `attempt()`
- * fails a user without confirmed two-factor whatever outcome is programmed.
+ * fails a user without confirmed two-factor whatever outcome is programmed, fires
+ * the same events (`TwoFactorVerified`, `RecoveryCodeConsumed`,
+ * `TwoFactorVerificationFailed`, `TwoFactorReplayDetected` — the replay carries
+ * timestep 0, the step the fake's `verify()` reports), and a recovery-code pass
+ * spends one stored code (the first), so `status()` agrees with the result.
  *
  * Enrolment writes (`start`, `confirm`, `disable`, `recoveryCodes()->regenerate`)
  * run the real actions against the fake's canned secret, codes and programmable
@@ -146,7 +156,8 @@ final class TwoFactorFake implements TwoFactorService
 
     /**
      * Pin the remaining recovery-code count attempt() reports. Unset, the fake
-     * reports the user's stored count, one lower when a recovery code passes.
+     * reports the user's stored count, one lower when a recovery code passes (and
+     * spends one stored code). A recovery pass spends a stored code either way.
      */
     public function withRemainingRecoveryCodes(int $remaining): self
     {
@@ -465,28 +476,82 @@ final class TwoFactorFake implements TwoFactorService
         return $this;
     }
 
-    private function outcome(TwoFactorAuthenticatable $user, #[SensitiveParameter] string $code): VerificationResult
+    /**
+     * The programmed outcome, with the real action's side effects: its events and,
+     * on a recovery-code pass, one stored code spent.
+     */
+    private function outcome(TwoFactorAuthenticatable&Model $user, #[SensitiveParameter] string $code): VerificationResult
     {
         $stored = count($user->twoFactorRecoveryCodes());
 
         // Like the real action: only a confirmed enrolment can pass a challenge,
         // whatever outcome is programmed, so a host test never passes a user the
-        // real flow would refuse.
+        // real flow would refuse. The real action fires no event here either.
         if (! $user->hasTwoFactorEnabled()) {
             return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored);
         }
 
         if ($this->replays) {
+            $this->dispatch(new TwoFactorReplayDetected($user, 0));
+
             return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored, replayed: true);
         }
 
         if (! $this->passes($code)) {
+            $this->dispatch(new TwoFactorVerificationFailed($user));
+
             return VerificationResult::failed($this->remainingRecoveryCodes ?? $stored);
         }
 
-        $spent = $this->method === TwoFactorMethod::RecoveryCode ? 1 : 0;
+        if ($this->method === TwoFactorMethod::RecoveryCode) {
+            $left = $this->spendRecoveryCode($user);
+            $result = VerificationResult::via($this->method, $this->remainingRecoveryCodes ?? $left ?? max(0, $stored - 1));
 
-        return VerificationResult::via($this->method, $this->remainingRecoveryCodes ?? max(0, $stored - $spent));
+            $this->dispatch(new RecoveryCodeConsumed($user, $result->remainingRecoveryCodes));
+        } else {
+            $result = VerificationResult::via($this->method, $this->remainingRecoveryCodes ?? $stored);
+        }
+
+        $this->dispatch(new TwoFactorVerified($user, $this->method));
+
+        return $result;
+    }
+
+    /**
+     * Spend one stored recovery code (the first), returning how many are left — or
+     * null when the row is gone or holds none. Like the real action, the write goes
+     * to a freshly-read row with timestamps off, never the caller's own instance,
+     * and the reduced list is mirrored onto the caller's instance for read-back.
+     */
+    private function spendRecoveryCode(TwoFactorAuthenticatable&Model $user): ?int
+    {
+        /** @var (TwoFactorAuthenticatable&Model)|null $row */
+        $row = $user->newQuery()->find($user->getKey());
+        $codes = $row?->twoFactorRecoveryCodes() ?? [];
+
+        if ($row === null || $codes === []) {
+            return null;
+        }
+
+        $column = ConfigGuard::columns()['recovery_codes'];
+        $remaining = array_slice($codes, 1);
+
+        $row->timestamps = false;
+        $row->setAttribute($column, $remaining);
+        $row->save();
+
+        $user->setAttribute($column, $remaining);
+        $user->syncOriginalAttribute($column);
+
+        return count($remaining);
+    }
+
+    /**
+     * Resolved per dispatch, so an Event::fake() made after TwoFactor::fake() sees it.
+     */
+    private function dispatch(object $event): void
+    {
+        $this->container->make(Dispatcher::class)->dispatch($event);
     }
 
     private function passes(#[SensitiveParameter] string $code): bool

@@ -26,6 +26,10 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 - `TwoFactor::verify()` now bounds an explicit `$window` to 0–2 steps, like the configured
   `window`; a wider one throws `InvalidTwoFactorConfigException` instead of being honoured up to
   ±10 steps.
+- `TwoFactor::fake()`: a faked `attempt()` now fires the same events as the real action
+  (`TwoFactorVerified`, `RecoveryCodeConsumed`, `TwoFactorVerificationFailed`,
+  `TwoFactorReplayDetected`), and a recovery-code pass spends one stored code, so `status()` and
+  `recoveryCodes()->remaining()` agree with the reported count.
 
 ## 1.0.0 - 2026-10-03
 

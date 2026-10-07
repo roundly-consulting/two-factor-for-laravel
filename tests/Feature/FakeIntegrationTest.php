@@ -3,10 +3,16 @@
 declare(strict_types=1);
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use RoundlyConsulting\TwoFactor\Actions\ConfirmEnrolment;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
+use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
+use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorReplayDetected;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
+use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
 use RoundlyConsulting\TwoFactor\Testing\TwoFactorFake;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
@@ -107,4 +113,84 @@ it('runs the documented fake examples as written', function (): void {
         PHP;
 
     eval($example);
+});
+
+/**
+ * A host listener (say, one that marks the session 2FA-passed on TwoFactorVerified) must be
+ * exercisable through the fake, so a faked attempt fires what the real action fires.
+ */
+it('fires the real attempt events from a faked attempt', function (): void {
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
+    Event::fake();
+    $fake = TwoFactor::fake();
+
+    TwoFactor::for($user)->attempt('123456');
+    Event::assertDispatchedTimes(TwoFactorVerified::class, 1);
+    Event::assertDispatched(TwoFactorVerified::class, fn (TwoFactorVerified $event): bool => $event->user->is($user)
+        && $event->method === TwoFactorMethod::Totp);
+
+    $fake->acceptRecoveryCode();
+    TwoFactor::for($user)->attempt('ABCDE-FGHIJ');
+    Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->user->is($user)
+        && $event->remaining === 7);
+    Event::assertDispatched(TwoFactorVerified::class, fn (TwoFactorVerified $event): bool => $event->method === TwoFactorMethod::RecoveryCode);
+
+    $fake->reject();
+    TwoFactor::for($user)->attempt('000000');
+    Event::assertDispatchedTimes(TwoFactorVerificationFailed::class, 1);
+
+    $fake->replay();
+    TwoFactor::for($user)->attempt('123456');
+    Event::assertDispatched(TwoFactorReplayDetected::class, fn (TwoFactorReplayDetected $event): bool => $event->user->is($user));
+
+    // Nothing beyond what the real action would have fired.
+    Event::assertDispatchedTimes(TwoFactorVerified::class, 2);
+    Event::assertDispatchedTimes(RecoveryCodeConsumed::class, 1);
+    Event::assertDispatchedTimes(TwoFactorVerificationFailed::class, 1);
+    Event::assertDispatchedTimes(TwoFactorReplayDetected::class, 1);
+});
+
+it('fires no attempt event for a user without confirmed two-factor, like the real action', function (): void {
+    $user = TwoFactorUser::factory()->create();
+    Event::fake();
+    $fake = TwoFactor::fake();
+
+    TwoFactor::for($user)->attempt('123456');
+    $fake->reject();
+    TwoFactor::for($user)->attempt('000000');
+
+    Event::assertNotDispatched(TwoFactorVerified::class);
+    Event::assertNotDispatched(TwoFactorVerificationFailed::class);
+});
+
+it('spends one stored recovery code when a faked recovery code passes', function (): void {
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
+    $fake = TwoFactor::fake()->acceptRecoveryCode();
+
+    $result = TwoFactor::for($user)->attempt('ABCDE-FGHIJ');
+
+    expect($result->remainingRecoveryCodes)->toBe(7)
+        ->and(TwoFactor::for($user)->status()->recoveryCodesRemaining)->toBe(7)
+        ->and(TwoFactor::for($user)->recoveryCodes()->remaining())->toBe(7)
+        ->and($user->fresh()?->twoFactorRecoveryCodes())->toHaveCount(7);
+
+    // A TOTP pass spends nothing.
+    $fake->accept();
+    TwoFactor::for($user)->attempt('123456');
+
+    expect($user->fresh()?->twoFactorRecoveryCodes())->toHaveCount(7);
+});
+
+it('spends nothing and reports zero when a faked recovery code passes with none stored', function (): void {
+    $user = TwoFactorUser::factory()->withTwoFactor()->create();
+    $user->setAttribute((string) config('two-factor.columns.recovery_codes'), [])->save();
+    Event::fake();
+    TwoFactor::fake()->acceptRecoveryCode();
+
+    expect(TwoFactor::for($user)->attempt('ABCDE-FGHIJ'))
+        ->verified->toBeTrue()
+        ->remainingRecoveryCodes->toBe(0)
+        ->and($user->fresh()?->twoFactorRecoveryCodes())->toBe([]);
+
+    Event::assertDispatched(RecoveryCodeConsumed::class, fn (RecoveryCodeConsumed $event): bool => $event->remaining === 0);
 });

@@ -6,6 +6,8 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+## 1.1.3 - 2026-10-07
+
 ### Fixed
 
 - `php artisan about` now shows `invalid (string)` on a number row (code, drift window, secret

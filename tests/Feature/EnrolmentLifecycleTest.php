@@ -201,3 +201,79 @@ it('uses a custom column map when configured', function (): void {
     expect($user->fresh()->getAttribute('mfa_secret'))->not->toBeNull()
         ->and($user->fresh()->twoFactorSecret())->toBe($setup->secret);
 });
+
+/**
+ * Two tabs: this request loaded the user while S1 was pending, then another request's
+ * start() committed S2. Confirming with S1's code must not stamp confirmed_at onto S2 — a
+ * secret the user never scanned — so the confirm verifies against the row it locked.
+ */
+it('never enables a secret replaced by a concurrent start', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    $user = TwoFactorUser::factory()->create();
+
+    $first = app(StartEnrolment::class)->execute($user);
+    /** @var TwoFactorUser $stale */
+    $stale = $user->fresh();
+
+    /** @var TwoFactorUser $otherTab */
+    $otherTab = $user->fresh();
+    $second = app(StartEnrolment::class)->execute($otherTab);
+
+    expect(fn () => TwoFactor::for($stale)->confirm(TwoFactor::currentCode($first->secret)))
+        ->toThrow(InvalidTwoFactorCodeException::class);
+
+    $row = $user->fresh();
+
+    expect($row?->hasPendingTwoFactor())->toBeTrue()
+        ->and($row?->hasTwoFactorEnabled())->toBeFalse()
+        ->and($row?->twoFactorSecret())->toBe($second->secret);
+
+    Carbon::setTestNow();
+});
+
+it('confirms the locked row and syncs a stale caller instance', function (): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    $user = TwoFactorUser::factory()->create();
+
+    app(StartEnrolment::class)->execute($user);
+    /** @var TwoFactorUser $stale */
+    $stale = $user->fresh();
+
+    /** @var TwoFactorUser $otherTab */
+    $otherTab = $user->fresh();
+    $second = app(StartEnrolment::class)->execute($otherTab);
+
+    // The user scanned the newer QR code: its code confirms the row's own secret.
+    TwoFactor::for($stale)->confirm(TwoFactor::currentCode($second->secret));
+
+    expect($user->fresh()?->hasTwoFactorEnabled())->toBeTrue()
+        ->and($user->fresh()?->twoFactorSecret())->toBe($second->secret)
+        ->and($stale->hasTwoFactorEnabled())->toBeTrue()
+        ->and($stale->twoFactorSecret())->toBe($second->secret)
+        ->and($stale->twoFactorRecoveryCodes())->toBe($user->fresh()?->twoFactorRecoveryCodes())
+        ->and($stale->isDirty())->toBeFalse();
+
+    Carbon::setTestNow();
+});
+
+it('refuses to confirm once a concurrent request already confirmed or disabled', function (string $race): void {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_000_000));
+    $user = TwoFactorUser::factory()->create();
+    $setup = app(StartEnrolment::class)->execute($user);
+    /** @var TwoFactorUser $stale */
+    $stale = $user->fresh();
+
+    /** @var TwoFactorUser $otherTab */
+    $otherTab = $user->fresh();
+
+    if ($race === 'confirmed') {
+        app(ConfirmEnrolment::class)->execute($otherTab, TwoFactor::currentCode($setup->secret));
+    } else {
+        app(DisableTwoFactor::class)->execute($otherTab);
+    }
+
+    expect(fn () => TwoFactor::for($stale)->confirm(TwoFactor::currentCode($setup->secret)))
+        ->toThrow(TwoFactorNotPendingException::class);
+
+    Carbon::setTestNow();
+})->with(['confirmed', 'disabled']);

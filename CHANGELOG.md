@@ -30,6 +30,11 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
   (`TwoFactorVerified`, `RecoveryCodeConsumed`, `TwoFactorVerificationFailed`,
   `TwoFactorReplayDetected`), and a recovery-code pass spends one stored code, so `status()` and
   `recoveryCodes()->remaining()` agree with the reported count.
+- `confirm()` (`ConfirmEnrolment`) now verifies the code against the row it locks
+  (`lockForUpdate()` inside a transaction), not the caller's in-memory secret, so a concurrent
+  `start()` can no longer leave two-factor enabled on a secret the user never scanned. It re-checks
+  that the row is still pending, writes only `confirmed_at` to that row (unrelated unsaved
+  attributes on the passed model are no longer saved with it) and syncs the passed model.
 
 ## 1.0.0 - 2026-10-03
 

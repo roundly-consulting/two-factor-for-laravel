@@ -42,6 +42,10 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 - `php artisan about` no longer crashes when `two-factor.replay_guard` is set to a
   `ReplayGuardMode` case, and renders an `OtpAlgorithm` / `RecoveryCodeStorage` case as its value
   instead of the default.
+- `attempt()` in hashed recovery-code mode no longer runs one `Hash::check` per stored code while
+  holding the user-row lock (roughly 0.5–1.8 s per wrong code at bcrypt cost 10–12). The candidate
+  is matched before the lock; under the lock only the matched entry is re-confirmed, so a code
+  still can't be spent twice.
 
 ## 1.0.0 - 2026-10-03
 

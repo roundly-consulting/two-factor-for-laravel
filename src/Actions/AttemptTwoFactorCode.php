@@ -102,12 +102,22 @@ final readonly class AttemptTwoFactorCode
         );
         $column = ConfigGuard::columns()['recovery_codes'];
 
-        // Consume under a transaction with a locked, fresh re-read of the row so
-        // two concurrent requests carrying the same code cannot both match a
-        // stale in-memory list and double-spend it (finding 1). The write is
-        // scoped to the freshly-loaded row, never the host's own instance, so no
-        // unrelated dirty attribute is flushed (finding 11).
-        $result = $user->getConnection()->transaction(function () use ($user, $code, $manager, $column): VerificationResult {
+        // Match on an unlocked fresh read first. In hashed mode that is one
+        // Hash::check per stored code (~N bcrypts), and every mistyped TOTP gets
+        // here, so it must not run while the row is locked. A fresh read, not the
+        // caller's instance, so codes regenerated since it was loaded still match.
+        /** @var (TwoFactorAuthenticatable&Model)|null $fresh */
+        $fresh = $user->newQuery()->find($user->getKey());
+        $matched = $fresh === null ? null : $manager->match($fresh->twoFactorRecoveryCodes(), $code);
+
+        // The spend is still decided under a transaction with a locked re-read of
+        // the row — taken match or not — so two concurrent requests carrying the
+        // same code cannot both spend it (finding 1): under the lock only the
+        // matched entry is re-confirmed, by string identity, and if a rival spent
+        // it first it is gone. The write is scoped to the freshly-loaded row, never
+        // the host's own instance, so no unrelated dirty attribute is flushed
+        // (finding 11).
+        $result = $user->getConnection()->transaction(function () use ($user, $matched, $column): VerificationResult {
             /** @var (TwoFactorAuthenticatable&Model)|null $locked */
             $locked = $user->newQuery()->lockForUpdate()->find($user->getKey());
 
@@ -116,7 +126,7 @@ final readonly class AttemptTwoFactorCode
             }
 
             $current = $locked->twoFactorRecoveryCodes();
-            $remaining = $manager->consume($current, $code);
+            $remaining = $matched === null ? null : RecoveryCodeManager::without($current, $matched);
 
             if ($remaining === null) {
                 return VerificationResult::failed(count($current));

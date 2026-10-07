@@ -69,17 +69,50 @@ final readonly class RecoveryCodeManager
      */
     public function consume(array $stored, #[SensitiveParameter] string $candidate): ?array
     {
+        $matched = $this->match($stored, $candidate);
+
+        return $matched === null ? null : self::without($stored, $matched);
+    }
+
+    /**
+     * The stored entry the candidate matches, or null. In hashed mode this is one
+     * Hash::check per stored entry, so run it outside any row lock and re-confirm
+     * the entry under the lock with without().
+     *
+     * @param  list<string>  $stored
+     */
+    public function match(array $stored, #[SensitiveParameter] string $candidate): ?string
+    {
         $candidate = self::normalize($candidate);
 
-        foreach ($stored as $index => $storedCode) {
+        foreach ($stored as $storedCode) {
             if ($this->matches($storedCode, $candidate)) {
-                unset($stored[$index]);
-
-                return array_values($stored);
+                return $storedCode;
             }
         }
 
         return null;
+    }
+
+    /**
+     * The stored list with exactly one occurrence of an entry match() returned
+     * removed — compared by string identity, no hashing — or null when the entry
+     * is no longer stored (spent or replaced since it was matched).
+     *
+     * @param  list<string>  $stored
+     * @return list<string>|null
+     */
+    public static function without(array $stored, #[SensitiveParameter] string $entry): ?array
+    {
+        $index = array_search($entry, $stored, true);
+
+        if ($index === false) {
+            return null;
+        }
+
+        unset($stored[$index]);
+
+        return array_values($stored);
     }
 
     /**

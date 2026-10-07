@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Hashing\Hasher;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Hash;
 use RoundlyConsulting\TwoFactor\Actions\StartEnrolment;
 use RoundlyConsulting\TwoFactor\DataTransferObjects\TwoFactorSetup;
+use RoundlyConsulting\TwoFactor\Enums\RecoveryCodeStorage;
 use RoundlyConsulting\TwoFactor\Enums\TwoFactorMethod;
 use RoundlyConsulting\TwoFactor\Events\RecoveryCodeConsumed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorRateLimited;
@@ -14,6 +18,7 @@ use RoundlyConsulting\TwoFactor\Events\TwoFactorVerificationFailed;
 use RoundlyConsulting\TwoFactor\Events\TwoFactorVerified;
 use RoundlyConsulting\TwoFactor\Exceptions\TwoFactorRateLimitedException;
 use RoundlyConsulting\TwoFactor\Facades\TwoFactor;
+use RoundlyConsulting\TwoFactor\Support\RecoveryCodeManager;
 use RoundlyConsulting\TwoFactor\Tests\Fixtures\TwoFactorUser;
 
 /**
@@ -303,4 +308,99 @@ it('never rate-limits when the limiter is disabled', function (): void {
     foreach (range(1, 20) as $ignored) {
         expect(TwoFactor::for($user->fresh())->attempt('000000')->verified)->toBeFalse();
     }
+});
+
+/**
+ * In hashed mode, matching a candidate is one Hash::check per stored code — about half a
+ * second of bcrypt for eight codes. That work must not run while the user row is locked:
+ * every mistyped TOTP reaches the recovery fallback, so it would hold the row for every
+ * wrong guess. The lock is still taken (VerificationConcurrencyTest pins that); only the
+ * single matched entry is re-confirmed under it, by string identity.
+ */
+it('never runs a recovery-code hash check while holding the row lock', function (string $which): void {
+    [$user, $setup] = enrolledUserWithSetup();
+
+    $counting = new class(app('hash')) implements Hasher
+    {
+        public int $checks = 0;
+
+        public int $checksUnderLock = 0;
+
+        public function __construct(private readonly Hasher $inner) {}
+
+        public function info($hashedValue): array
+        {
+            return $this->inner->info($hashedValue);
+        }
+
+        public function make(#[SensitiveParameter] $value, array $options = []): string
+        {
+            return $this->inner->make($value, $options);
+        }
+
+        public function check(#[SensitiveParameter] $value, $hashedValue, array $options = []): bool
+        {
+            $this->checks++;
+
+            if (DB::transactionLevel() > 0) {
+                $this->checksUnderLock++;
+            }
+
+            return $this->inner->check($value, $hashedValue, $options);
+        }
+
+        public function needsRehash($hashedValue, array $options = []): bool
+        {
+            return $this->inner->needsRehash($hashedValue, $options);
+        }
+    };
+
+    Hash::swap($counting);
+
+    $code = $which === 'right' ? $setup->recoveryCodes[3] : '000000';
+
+    expect(TwoFactor::for($user)->attempt($code)->verified)->toBe($which === 'right')
+        // Not vacuous: the candidate really was hash-checked...
+        ->and($counting->checks)->toBeGreaterThan(0)
+        // ...just never under the lock.
+        ->and($counting->checksUnderLock)->toBe(0)
+        ->and($user->fresh()?->twoFactorRecoveryCodes())->toHaveCount($which === 'right' ? 7 : 8);
+})->with(['wrong code' => ['wrong'], 'right recovery code' => ['right']]);
+
+/**
+ * The other half of matching before the lock: a rival request spends the very code this
+ * attempt just matched, between the unlocked match and the locked re-read. Under the lock
+ * the matched entry is gone, so this attempt fails — one code, one spend.
+ */
+it('fails closed when a rival spends the matched recovery code before the lock', function (): void {
+    Event::fake([RecoveryCodeConsumed::class]);
+    [$user, $setup] = enrolledUserWithSetup();
+    $code = $setup->recoveryCodes[2];
+    $raced = false;
+
+    // Fires on the unlocked match read — outside any transaction, after the match.
+    Event::listen('eloquent.retrieved: '.TwoFactorUser::class, function (TwoFactorUser $row) use (&$raced, $code): void {
+        if ($raced || DB::transactionLevel() > 0) {
+            return;
+        }
+
+        $raced = true;
+
+        $rival = TwoFactorUser::query()->findOrFail($row->getKey());
+        $rival->timestamps = false;
+        $rival->setAttribute(
+            (string) config('two-factor.columns.recovery_codes'),
+            (new RecoveryCodeManager(RecoveryCodeStorage::Hashed))->consume($rival->twoFactorRecoveryCodes(), $code),
+        );
+        $rival->save();
+    });
+
+    expect(TwoFactor::for($user)->attempt($code))
+        ->verified->toBeFalse()
+        ->remainingRecoveryCodes->toBe(7)
+        ->and($raced)->toBeTrue()
+        // Only the rival's spend landed.
+        ->and($user->fresh()?->twoFactorRecoveryCodes())->toHaveCount(7);
+
+    Event::assertNotDispatched(RecoveryCodeConsumed::class);
 });

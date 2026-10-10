@@ -6,6 +6,8 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+## 1.1.4 - 2026-10-11
+
 ### Security
 
 - Flat facade calls (`TwoFactor::currentCode()`, `TwoFactor::verify()`,

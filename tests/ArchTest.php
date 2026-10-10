@@ -110,24 +110,15 @@ arch('src only uses allowed vendor roots')
     ]);
 
 /*
- * Each vendor is named by its real PSR-4 root(s): Pest resolves a name only through an
- * autoload root at or above it. A bare `PragmaRX`, `Endroid`, `chillerlan` or
- * `SimpleSoftwareIO` (packages rooted at `PragmaRX\Google2FA\`, `Endroid\QrCode\`,
- * `chillerlan\QRCode\`, `SimpleSoftwareIO\QrCode\`) matched nothing even with the vendor
- * installed — measured with a simulated install.
+ * No third-party OTP, QR or cron vendor, by bare vendor prefix. A source-token scan, so a sibling
+ * package under a prefix (`PragmaRX\Recovery` next to `PragmaRX\Google2FA`) and a vendor that is
+ * not installed are caught too; the `->not->toBeUsed()` list that stood here resolved only installed
+ * PSR-4 roots and missed both. The allow-list above stays: it bans everything else.
  */
-arch('no forbidden crypto or qr vendors are imported')
-    ->expect([
-        'PragmaRX\Google2FA',
-        'PragmaRX\Google2FALaravel',
-        'PragmaRX\Google2FAQRCode',
-        'BaconQrCode',
-        'Endroid\QrCode',
-        'chillerlan\QRCode',
-        'SimpleSoftwareIO\QrCode',
-        'Cron',
-    ])
-    ->not->toBeUsed();
+ArchPresets::noVendorNamespace(
+    ['PragmaRX', 'BaconQrCode', 'Endroid', 'chillerlan', 'SimpleSoftwareIO', 'Cron'],
+    __DIR__.'/../src',
+);
 
 /**
  * Bespoke, kept — no preset equivalent. Only crypto's PUBLIC surface is ours to use:

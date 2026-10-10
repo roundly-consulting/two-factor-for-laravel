@@ -109,8 +109,24 @@ arch('src only uses allowed vendor roots')
         '__',
     ]);
 
+/*
+ * Each vendor is named by its real PSR-4 root(s): Pest resolves a name only through an
+ * autoload root at or above it. A bare `PragmaRX`, `Endroid`, `chillerlan` or
+ * `SimpleSoftwareIO` (packages rooted at `PragmaRX\Google2FA\`, `Endroid\QrCode\`,
+ * `chillerlan\QRCode\`, `SimpleSoftwareIO\QrCode\`) matched nothing even with the vendor
+ * installed — measured with a simulated install.
+ */
 arch('no forbidden crypto or qr vendors are imported')
-    ->expect(['PragmaRX', 'BaconQrCode', 'Endroid', 'chillerlan', 'SimpleSoftwareIO', 'Cron'])
+    ->expect([
+        'PragmaRX\Google2FA',
+        'PragmaRX\Google2FALaravel',
+        'PragmaRX\Google2FAQRCode',
+        'BaconQrCode',
+        'Endroid\QrCode',
+        'chillerlan\QRCode',
+        'SimpleSoftwareIO\QrCode',
+        'Cron',
+    ])
     ->not->toBeUsed();
 
 /**

@@ -6,6 +6,12 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Security
+
+- Flat facade calls (`TwoFactor::currentCode()`, `TwoFactor::verify()`,
+  `TwoFactor::provisioningUri()`) no longer leave their `#[SensitiveParameter]` arguments (the TOTP
+  secret and the submitted code) in the facade's stack frame; package-toolkit `^1.3`.
+
 ## 1.1.3 - 2026-10-07
 
 ### Fixed

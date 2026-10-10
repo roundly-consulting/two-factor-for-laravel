@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoundlyConsulting\TwoFactor\Facades;
 
 use Illuminate\Support\Facades\Facade;
+use RoundlyConsulting\PackageToolkit\Concerns\RedactsSensitiveArguments;
 use RoundlyConsulting\TwoFactor\Contracts\TwoFactorService;
 use RoundlyConsulting\TwoFactor\Testing\TwoFactorFake;
 use RoundlyConsulting\TwoFactor\TwoFactorManager;
@@ -22,6 +23,8 @@ use RoundlyConsulting\TwoFactor\TwoFactorManager;
  */
 final class TwoFactor extends Facade
 {
+    use RedactsSensitiveArguments;
+
     /**
      * Swap the two-factor service for a programmable, no-crypto recording fake
      * (bound under the service contract) and return it for assertions.

@@ -16,3 +16,12 @@ it('keeps the facade complete, fakeable and covering every action', function ():
         ->toBeFakeable()
         ->toReachEveryAction(__DIR__.'/../../src/Actions');
 });
+
+/*
+ * A flat call keeps its secrets out of the facade's own stack frame. Three root methods take a
+ * `#[SensitiveParameter]`: currentCode ($secret), verify ($secret, $code) and provisioningUri
+ * ($secret). Harmless arguments (timestamp, window, label, issuer) stay visible.
+ */
+it('redacts the secret arguments of flat facade calls', function (): void {
+    expect(TwoFactor::class)->toRedactSensitiveArguments(methods: 3);
+});

@@ -33,7 +33,7 @@
         "illuminate/support": "^12.0|^13.0",
         "roundly-consulting/crypto-for-laravel": "^1.0.1",
         "roundly-consulting/enums-for-laravel": "^1.0",
-        "roundly-consulting/package-toolkit-for-laravel": "^1.0"
+        "roundly-consulting/package-toolkit-for-laravel": "^1.3"
     },
     "require-dev": {
         "larastan/larastan": "^3.0",
@@ -42,7 +42,7 @@
         "orchestra/testbench": "^10.0|^11.0",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-arch": "^4.0",
-        "roundly-consulting/testing-for-laravel": "^1.0"
+        "roundly-consulting/testing-for-laravel": "^1.2"
     },
     "suggest": {
         "roundly-consulting/qr-for-laravel": "Render the enrolment otpauth:// URI as an SVG QR code server-side: Qr::otpauth($setup->provisioningUri)->svg()"

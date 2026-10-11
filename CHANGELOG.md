@@ -6,6 +6,10 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+### Changed
+
+- Maintenance: requires the latest roundly packages — package-toolkit `^1.3.0`, enums `^1.1.0`, crypto `^1.1.2`; dev: testing `^1.2.1`.
+
 ## 1.1.4 - 2026-10-11
 
 ### Security

@@ -11,10 +11,12 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 ### Fixed
 
 - Larastan / PHPStan now knows the `$table->twoFactorColumns(): void` and
-  `$table->dropTwoFactorColumns(): void` schema macros. A macro only exists once the provider
-  boots, which static analysis never does, so a migration calling them failed with "Call to an
-  undefined method". The package ships a PHPStan extension that `phpstan/extension-installer`
-  loads automatically (`extra.phpstan.includes`); without the installer, include
+  `$table->dropTwoFactorColumns(): void` schema macros. A macro only exists once its provider boots.
+  Larastan boots an auto-discovering host app and usually finds it, but not where the provider isn't
+  booted during analysis (package development under Testbench, `dont-discover`, a provider
+  registered by hand) — there a migration calling them failed with "Call to an undefined method".
+  The package ships a PHPStan extension that `phpstan/extension-installer` loads automatically
+  (`extra.phpstan.includes`); without the installer, include
   `vendor/roundly-consulting/two-factor-for-laravel/extension.neon`.
 
 ## 1.1.5 - 2026-10-11

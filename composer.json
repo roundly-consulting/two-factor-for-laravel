@@ -42,7 +42,7 @@
         "orchestra/testbench": "^10.0|^11.0",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-arch": "^4.0",
-        "roundly-consulting/testing-for-laravel": "^1.2.1"
+        "roundly-consulting/testing-for-laravel": "^1.6"
     },
     "suggest": {
         "roundly-consulting/qr-for-laravel": "Render the enrolment otpauth:// URI as an SVG QR code server-side: Qr::otpauth($setup->provisioningUri)->svg()"

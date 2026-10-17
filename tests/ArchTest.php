@@ -107,7 +107,10 @@ arch('src only uses allowed vendor roots')
         'decrypt',
         'now',
         '__',
-    ]);
+    ])
+    // The Larastan macro declaration may use PHPStan's namespace: only PHPStan ever loads it.
+    // tests/Unit/PHPStan pins what it imports and that no other src file names PHPStan.
+    ->ignoring('RoundlyConsulting\TwoFactor\PHPStan');
 
 /*
  * No third-party OTP, QR or cron vendor, by bare vendor prefix. A source-token scan, so a sibling

@@ -1,5 +1,6 @@
 includes:
     - vendor/larastan/larastan/extension.neon
+    - extension.neon
 parameters:
     level: 7
     paths:
@@ -8,6 +9,8 @@ parameters:
         # The consumer-facing trait is only applied by host models, so include the
         # test fixture that uses it so PHPStan analyses the trait in context.
         - tests/Fixtures/TwoFactorUser.php
+        # A host migration calling the schema macros: proves they are declared for Larastan.
+        - tests/PHPStan
     # This package ships its own config/ dir; env() is correct there.
     configDirectories:
         - config

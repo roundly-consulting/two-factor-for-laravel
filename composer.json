@@ -77,6 +77,11 @@
             "aliases": {
                 "TwoFactor": "RoundlyConsulting\\TwoFactor\\Facades\\TwoFactor"
             }
+        },
+        "phpstan": {
+            "includes": [
+                "extension.neon"
+            ]
         }
     }
 }

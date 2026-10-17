@@ -6,6 +6,8 @@ All notable changes to `two-factor-for-laravel` are documented in this file. The
 
 ## Unreleased
 
+## 1.1.6 - 2026-10-17
+
 ### Fixed
 
 - Larastan / PHPStan now knows the `$table->twoFactorColumns(): void` and

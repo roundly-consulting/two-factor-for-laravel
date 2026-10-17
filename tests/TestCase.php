@@ -38,4 +38,13 @@ abstract class TestCase extends PackageTestCase
     {
         return [__DIR__.'/database/migrations'];
     }
+
+    /**
+     * Migrate once per worker and schema signature, then empty the tables after each test.
+     * The fixture migration reads only the provider's macro, which the signature covers.
+     */
+    protected function keepsMigratedSchema(): bool
+    {
+        return true;
+    }
 }
